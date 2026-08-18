@@ -1,0 +1,28 @@
+# Dependencies / build output
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+target/
+.pnpm-store/
+
+# Local toolchain redirected into the workspace (this read-only-root env)
+.cargo/
+.rustup/
+.cache/
+.config/
+.local/
+.npm/
+.npmrc.local
+.pnpm/
+.corepack/
+
+# Editor / OS
+.DS_Store
+*.log
+
+# Scaffold scratch
+.cta-scaffold/
+
+# Machine-specific shell env (used to redirect toolchain caches in WSL)
+.env

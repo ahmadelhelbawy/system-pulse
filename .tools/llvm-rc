@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Minimal llvm-rc stand-in for `cargo check --target *-windows-*` on non-Windows
+# hosts. embed-resource only needs it to probe as runnable and to produce the
+# .res file; cargo check does not link, so an empty .res is sufficient.
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "/fo" ]; then out="$a"; fi
+  prev="$a"
+done
+if [ -n "$out" ]; then
+  : > "$out"
+fi
+exit 0
