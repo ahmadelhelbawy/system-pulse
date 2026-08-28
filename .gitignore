@@ -7,7 +7,8 @@ target/
 .pnpm-store/
 
 # Local toolchain redirected into the workspace (this read-only-root env)
-.cargo/
+.cargo/*
+!.cargo/config.toml
 .rustup/
 .cache/
 .config/
@@ -23,6 +24,10 @@ target/
 
 # Scaffold scratch
 .cta-scaffold/
+
+# Machine-specific benchmark evidence (see fixtures/replay/ for the
+# committed, sanitized counterpart used by replay tests).
+benchmarks/
 
 # Machine-specific shell env (used to redirect toolchain caches in WSL)
 .env

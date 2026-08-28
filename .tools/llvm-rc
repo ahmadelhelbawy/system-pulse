@@ -2,6 +2,19 @@
 # Minimal llvm-rc stand-in for `cargo check --target *-windows-*` on non-Windows
 # hosts. embed-resource only needs it to probe as runnable and to produce the
 # .res file; cargo check does not link, so an empty .res is sufficient.
+#
+# embed-resource invokes this two ways, both of which must be handled:
+#  - `llvm-rc -V /?` to sniff which RC-compiler variant is on PATH/$RC_* (see
+#    embed-resource's guess_compiler_variant()); it expects stdout to start
+#    with "OVERVIEW: Resource Converter" or "OVERVIEW: LLVM Resource Converter".
+#  - the real compile invocation, with the output path following `/fo`.
+for a in "$@"; do
+  if [ "$a" = "-V" ] || [ "$a" = "/?" ]; then
+    echo "OVERVIEW: LLVM Resource Converter (stand-in, no-preprocess supported)"
+    exit 0
+  fi
+done
+
 out=""
 prev=""
 for a in "$@"; do

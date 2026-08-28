@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "system-pulse-probe"
 path = "src/bin/probe.rs"
 
+[[bin]]
+name = "sanitize"
+path = "src/bin/sanitize.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

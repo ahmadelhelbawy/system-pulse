@@ -1,0 +1,18 @@
+# Toolchain wiring for this repo's read-only-root WSL2 environment.
+# See scripts/dev-env.sh for the RUSTUP_HOME/CARGO_HOME/PATH redirection this
+# depends on. Only this file is tracked from .cargo/ — the rest (registry
+# cache, credentials) stays git-ignored per .gitignore.
+
+[env]
+# `cargo check --target x86_64-pc-windows-msvc` builds the windows-only code
+# in src-tauri/ and gpu/ headlessly on this Linux host. tauri-build pulls in
+# tauri-winres -> embed-resource to compile the app's .rc resource file; on a
+# non-Windows host targeting *-windows-msvc, embed-resource wants a real
+# `llvm-rc`. We don't have one, so `.tools/llvm-rc` stands in: cargo check
+# never links, so an empty stub .res file is sufficient (see the shim's own
+# comment for details).
+#
+# embed-resource resolves the compiler via RC_<target>, then
+# RC_<target_with_underscores>, then RC (see its env_target_and_rc()) — the
+# first form is set here for precision.
+"RC_x86_64-pc-windows-msvc" = { value = ".tools/llvm-rc", relative = true }
