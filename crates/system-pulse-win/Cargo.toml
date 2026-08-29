@@ -1,0 +1,23 @@
+[package]
+name = "system-pulse-win"
+version = "0.1.0"
+edition = "2021"
+description = "Windows-specific telemetry collectors for System Pulse"
+license = "MIT"
+
+[lib]
+name = "system_pulse_win"
+path = "src/lib.rs"
+
+[dependencies]
+system-pulse-core = { path = "../system-pulse-core" }
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+] }

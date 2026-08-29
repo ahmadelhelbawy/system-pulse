@@ -20,7 +20,17 @@ export type CollectorCapability = { id: CollectorId, requiredPrivilege: Privileg
 /**
  * Identifies a collector for scheduling, logging, and capability reports.
  */
-export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process";
+export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process" | "windowsInternal" | "connections" | "hardware" | "pdhGpu";
+
+/**
+ * One row from `GetExtendedTcpTable`/`GetExtendedUdpTable`
+ * (`*_OWNER_PID_ALL`, Phase 1B) — process↔network attribution and
+ * listening ports, unelevated. `pid` is `Some` whenever Windows could
+ * attribute the connection to a process (always, in practice, for
+ * `OWNER_PID` tables; modeled as optional because the underlying API
+ * contract doesn't guarantee it).
+ */
+export type ConnectionSnapshot = { protocol: TransportProtocol, localAddr: string, localPort: number, remoteAddr: string, remotePort: number, state: TcpState | null, pid: number | null, };
 
 export type CpuSnapshot = { 
 /**
@@ -35,6 +45,11 @@ perCore: Array<number>,
  * Representative current frequency in MHz (best-effort).
  */
 frequencyMhz: number | null, coreCount: number, };
+
+/**
+ * One DIMM entry from an SMBIOS Type 17 (Memory Device) structure.
+ */
+export type DimmInfo = { manufacturer: string | null, partNumber: string | null, sizeBytes: number | null, speedMts: number | null, };
 
 export type DiskIoSnapshot = { 
 /**
@@ -103,7 +118,14 @@ export type Privilege = "user" | "admin" | "driver";
  */
 export type ProcessIdentity = { pid: number, startedAt: UnixMillis, };
 
-export type ProcessSnapshot = { pid: number, name: string, cpuPercent: number, memory: number, gpuMem: number | null, exe: string | null, user: string | null, 
+export type ProcessSnapshot = { pid: number, name: string, cpuPercent: number, memory: number, gpuMem: number | null, 
+/**
+ * Per-process GPU engine utilization, 0..=100. Sourced from PDH's
+ * `\GPU Engine(*)\Utilization Percentage` (Phase 1B) — vendor-neutral,
+ * unlike `gpu_mem` which NVML provides only for NVIDIA. `None` when
+ * neither source has data for this process, not a fabricated `0`.
+ */
+gpuPercent: number | null, exe: string | null, user: string | null, 
 /**
  * Process creation time, backing `ProcessIdentity` — required so
  * terminating a process can be revalidated against the exact process
@@ -137,12 +159,26 @@ hideToTrayOnClose: boolean, };
 export type Severity = "info" | "warning" | "critical";
 
 /**
+ * Board/BIOS/DIMM inventory parsed from the SMBIOS table
+ * (`GetSystemFirmwareTable('RSMB')`, Phase 1B). Cold cadence, cached
+ * forever after the first successful probe — this data cannot change
+ * while the machine is running.
+ */
+export type SmbiosInfo = { boardVendor: string | null, boardProduct: string | null, biosVendor: string | null, biosVersion: string | null, biosReleaseDate: string | null, dimms: Array<DimmInfo>, };
+
+/**
  * Which subsystem produced a value. Closed enum so the wire form is a
  * stable string union, not an open `String` a typo can silently diverge.
  */
 export type Source = "getSystemTimes" | "procStat" | "sysinfo" | "nvml" | "pdh" | "smbios" | "ipHelper" | "perfInfo" | "registry" | "wmi" | "eventLog" | "storageIoctl" | "sensorBridge";
 
 export type SystemInfo = { osName: string, osVersion: string, kernelVersion: string, hostname: string, arch: string, cpuModel: string, cpuCores: number, totalMemory: number, };
+
+/**
+ * TCP connection states (`MIB_TCP_STATE`). Always `None` for UDP, which is
+ * connectionless.
+ */
+export type TcpState = "closed" | "listen" | "synSent" | "synReceived" | "established" | "finWait1" | "finWait2" | "closeWait" | "closing" | "lastAck" | "timeWait" | "deleteTcb";
 
 /**
  * One full telemetry frame, emitted at the cheap (hot) interval (default
@@ -156,11 +192,19 @@ export type TelemetrySnapshot = {
  */
 timestampMs: UnixMillis, uptimeSecs: number, cpu: Sampled<CpuSnapshot>, memory: Sampled<MemorySnapshot>, diskIo: Sampled<DiskIoSnapshot>, disks: Sampled<Array<DiskSnapshot>>, networks: Sampled<Array<NetworkSnapshot>>, gpu: Sampled<Array<GpuSnapshot>>, processes: Sampled<Array<ProcessSnapshot>>, 
 /**
+ * Handles/threads/process count/commit/pool/cache (Phase 1B). Hot
+ * cadence pending real-hardware timing validation — see
+ * `system-pulse-win::perf_info`'s module doc.
+ */
+windowsInternal: Sampled<WindowsInternalState>, 
+/**
  * Derived/computed, not collected from hardware — provenance doesn't
  * apply the same way, so this stays a plain list. Reshaped into a
  * scored `HealthScore` in Phase 2; untouched here.
  */
 health: Array<HealthAlert>, };
+
+export type TransportProtocol = "tcp" | "udp";
 
 /**
  * Milliseconds since the Unix epoch. `i64` (not `u64`) so `ts-rs`/JS see an
@@ -174,6 +218,15 @@ export type UnixMillis = number;
  * failed this one read — see [`FailureCode`]).
  */
 export type UnsupportedReason = "noSuchHardware" | "vendorUnsupported" | "driverAbsent" | "osTooOld" | "counterMissing" | "notImplementedOnPlatform";
+
+/**
+ * Windows internal state from a single `GetPerformanceInfo` call
+ * (Phase 1B) — handles/threads/process count and the commit/pool/cache
+ * figures Task Manager's Performance tab derives its "Committed" and
+ * "Cached" numbers from. All byte fields are `PageSize * <count>`; the
+ * raw struct reports pages, not bytes.
+ */
+export type WindowsInternalState = { handleCount: number, processCount: number, threadCount: number, commitTotal: number, commitLimit: number, kernelPagedPool: number, kernelNonPagedPool: number, systemCache: number, };
 
 /**
  * Structured IPC error from the Tauri shell (src-tauri/src/error.rs).

@@ -141,10 +141,27 @@ impl HotLoop {
                 as_of,
             )
         });
-        let gpu = sections.gpu.clone().unwrap_or_else(|| {
+        let nvml_gpu = sections.gpu.clone().unwrap_or_else(|| {
             Sampled::unavailable(
                 crate::model::Availability::failed(crate::model::FailureCode::Timeout),
                 crate::model::Source::Nvml,
+                as_of,
+            )
+        });
+        // Fallback ladder (Phase 1B): NVML is richer (temp/power/VRAM) and
+        // stays authoritative whenever it has data; PDH's vendor-neutral
+        // device-level utilization only fills in when NVML has none at all
+        // (no NVIDIA hardware/driver) — never overwrites a working NVML
+        // reading.
+        let gpu = if nvml_gpu.availability.is_ok() {
+            nvml_gpu
+        } else {
+            sections.gpu_device_fallback.clone().unwrap_or(nvml_gpu)
+        };
+        let windows_internal = sections.windows_internal.clone().unwrap_or_else(|| {
+            Sampled::unavailable(
+                crate::model::Availability::failed(crate::model::FailureCode::Timeout),
+                crate::model::Source::PerfInfo,
                 as_of,
             )
         });
@@ -155,7 +172,11 @@ impl HotLoop {
                 as_of,
             )
         });
-        join_gpu_process_mem(&mut processes, &sections.gpu_process_mem);
+        join_gpu_attribution(
+            &mut processes,
+            &sections.gpu_process_mem,
+            &sections.gpu_process_percent,
+        );
         drop(sections);
 
         let empty_disks = Vec::new();
@@ -181,23 +202,27 @@ impl HotLoop {
             networks,
             gpu,
             processes,
+            windows_internal,
             health,
         }
     }
 }
 
-/// Joins the GPU collector's per-process memory map into the process list.
-/// Done here, not inside either collector, so the two stay independent of
-/// one another — see `ProcessCollector`'s module doc. A pid absent from the
-/// map (no GPU memory attributed, or GPU data unavailable this tick) is
-/// left as `None`, not coerced to `Some(0)`.
-fn join_gpu_process_mem(
+/// Joins the GPU collectors' per-process maps into the process list. Done
+/// here, not inside either collector, so they stay independent of one
+/// another — see `ProcessCollector`'s module doc. `gpu_mem` (NVML) and
+/// `gpu_percent` (PDH) are independent per pid: a process may be in either
+/// map, both, or neither. A pid absent from a map is left `None`, never
+/// coerced to `Some(0)`.
+fn join_gpu_attribution(
     processes: &mut Sampled<Vec<crate::types::ProcessSnapshot>>,
     gpu_process_mem: &std::collections::HashMap<u32, u64>,
+    gpu_process_percent: &std::collections::HashMap<u32, f32>,
 ) {
     if let Some(rows) = processes.value.as_mut() {
         for row in rows.iter_mut() {
             row.gpu_mem = gpu_process_mem.get(&row.pid).copied();
+            row.gpu_percent = gpu_process_percent.get(&row.pid).copied();
         }
     }
 }
@@ -216,6 +241,7 @@ mod tests {
             cpu_percent: 0.0,
             memory: 0,
             gpu_mem: None,
+            gpu_percent: None,
             exe: None,
             user: None,
             started_at: None,
@@ -223,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn join_attaches_gpu_memory_by_pid() {
+    fn join_attaches_gpu_memory_and_percent_independently_by_pid() {
         let mut processes = Sampled::ok(
             vec![process(1), process(2), process(3)],
             Source::Sysinfo,
@@ -231,13 +257,18 @@ mod tests {
         );
         let mut gpu_mem = HashMap::new();
         gpu_mem.insert(2u32, 512_000u64);
+        let mut gpu_percent = HashMap::new();
+        gpu_percent.insert(3u32, 42.0f32); // different pid than gpu_mem, deliberately
 
-        join_gpu_process_mem(&mut processes, &gpu_mem);
+        join_gpu_attribution(&mut processes, &gpu_mem, &gpu_percent);
 
         let rows = processes.value.unwrap();
         assert_eq!(rows[0].gpu_mem, None);
+        assert_eq!(rows[0].gpu_percent, None);
         assert_eq!(rows[1].gpu_mem, Some(512_000));
+        assert_eq!(rows[1].gpu_percent, None);
         assert_eq!(rows[2].gpu_mem, None);
+        assert_eq!(rows[2].gpu_percent, Some(42.0));
     }
 
     #[test]
@@ -250,7 +281,7 @@ mod tests {
         let mut gpu_mem = HashMap::new();
         gpu_mem.insert(1u32, 1u64);
 
-        join_gpu_process_mem(&mut processes, &gpu_mem);
+        join_gpu_attribution(&mut processes, &gpu_mem, &HashMap::new());
 
         assert_eq!(processes.value, None);
     }
@@ -259,7 +290,9 @@ mod tests {
     fn join_leaves_unmatched_pids_as_none_not_zero() {
         let mut processes = Sampled::ok(vec![process(99)], Source::Sysinfo, UnixMillis(0));
         let gpu_mem = HashMap::new(); // no GPU data at all this tick
-        join_gpu_process_mem(&mut processes, &gpu_mem);
-        assert_eq!(processes.value.unwrap()[0].gpu_mem, None);
+        join_gpu_attribution(&mut processes, &gpu_mem, &HashMap::new());
+        let row = &processes.value.unwrap()[0];
+        assert_eq!(row.gpu_mem, None);
+        assert_eq!(row.gpu_percent, None);
     }
 }

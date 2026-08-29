@@ -6,6 +6,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "processes", label: "Processes" },
   { id: "gpu", label: "GPU" },
+  { id: "network", label: "Network" },
+  { id: "hardware", label: "Hardware" },
   { id: "health", label: "Health" },
   { id: "settings", label: "Settings" },
 ];

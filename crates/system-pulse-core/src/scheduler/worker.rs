@@ -135,6 +135,22 @@ fn publish(sections: &SharedSections, output: CollectorOutput) {
         CollectorOutput::Process(proc) => {
             sections.processes = Some(proc);
         }
+        CollectorOutput::WindowsInternal(w) => {
+            sections.windows_internal = Some(w);
+        }
+        CollectorOutput::Connections(c) => {
+            sections.connections = Some(c);
+        }
+        CollectorOutput::Hardware(h) => {
+            sections.hardware = Some(h);
+        }
+        CollectorOutput::PdhGpu {
+            per_process_percent,
+            device_fallback,
+        } => {
+            sections.gpu_process_percent = per_process_percent;
+            sections.gpu_device_fallback = device_fallback;
+        }
         // Hot-only outputs never originate from a worker loop.
         CollectorOutput::Cpu(_) | CollectorOutput::Memory(_) => {}
     }

@@ -16,7 +16,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let settings = crate::settings::load(app);
 
     let telemetry = TelemetryService::new(Arc::new(TauriSink { app: app.clone() }));
-    telemetry.spawn();
+    telemetry.spawn(system_pulse_win::all_collectors());
 
     app.manage(AppState {
         settings: Arc::new(std::sync::Mutex::new(settings.clone())),

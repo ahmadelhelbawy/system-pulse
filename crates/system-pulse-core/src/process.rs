@@ -142,6 +142,10 @@ pub fn normalize_process(row: ProcessRow) -> ProcessSnapshot {
         },
         memory: row.memory,
         gpu_mem: row.gpu_mem,
+        // Filled in by the assembly-stage join against the GPU collector's
+        // per-process maps (gpu_mem from NVML, gpu_percent from PDH) — see
+        // `scheduler::hot::join_gpu_process_mem`. Never set here.
+        gpu_percent: None,
         exe: row.exe,
         user: row.user,
         started_at: row.started_at,

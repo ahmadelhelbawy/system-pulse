@@ -24,7 +24,7 @@ use crate::transport::Mailbox;
 use crate::types::TelemetrySnapshot;
 
 use hot::HotLoop;
-use shared::new_shared_sections;
+use shared::{new_shared_sections, SharedSections};
 use wake::WakeSignal;
 use worker::WorkerLoop;
 
@@ -34,6 +34,7 @@ use worker::WorkerLoop;
 /// than waiting for whatever sleep is already in progress.
 pub struct Scheduler {
     shared_sys: Arc<parking_lot::Mutex<System>>,
+    sections: SharedSections,
     shutdown: Arc<AtomicBool>,
     visible: Arc<AtomicBool>,
     interval_ms: Arc<AtomicU64>,
@@ -49,6 +50,7 @@ impl Scheduler {
     pub fn new() -> Self {
         Self {
             shared_sys: Arc::new(parking_lot::Mutex::new(System::new())),
+            sections: new_shared_sections(),
             shutdown: Arc::new(AtomicBool::new(false)),
             visible: Arc::new(AtomicBool::new(false)),
             interval_ms: Arc::new(AtomicU64::new(DEFAULT_REFRESH_INTERVAL_MS)),
@@ -80,10 +82,15 @@ impl Scheduler {
         self.hot_wake.notify();
     }
 
-    /// Builds the collectors and spawns the hot thread plus a two-worker
-    /// pool for the warm-tier ones. Each collector is `probe()`d before its
-    /// thread starts running its schedule.
-    pub fn spawn(&self) {
+    /// Builds the built-in collectors and spawns the hot thread plus a
+    /// two-worker pool for the warm-tier ones. `extra_warm_collectors` are
+    /// merged into the worker pool alongside the built-ins — this is how
+    /// Windows-only collectors (`system-pulse-win`, which depends on this
+    /// crate and so cannot be constructed from inside it) get scheduled:
+    /// the caller (the Tauri shell) constructs them and hands them in here.
+    /// Each collector is `probe()`d before its thread starts running its
+    /// schedule.
+    pub fn spawn(&self, extra_warm_collectors: Vec<Box<dyn Collector>>) {
         let cpu = CpuCollector::new(Arc::clone(&self.shared_sys));
         let memory = MemoryCollector::new(Arc::clone(&self.shared_sys));
         let process = ProcessCollector::new(Arc::clone(&self.shared_sys));
@@ -91,12 +98,10 @@ impl Scheduler {
         let network = NetworkCollector::new();
         let gpu = GpuCollector::new();
 
-        let sections = new_shared_sections();
-
         let hot = HotLoop::new(
             cpu,
             memory,
-            Arc::clone(&sections),
+            Arc::clone(&self.sections),
             self.frame_mailbox.clone(),
             Arc::clone(&self.shutdown),
             Arc::clone(&self.visible),
@@ -109,9 +114,17 @@ impl Scheduler {
         // whose cadence is more often relied on for interactivity
         // (processes, disk), worker B gets network + the more expensive
         // GPU poll. A slow collector only ever delays collectors sharing
-        // its own worker, never the hot thread.
-        let worker_a: Vec<Box<dyn Collector>> = vec![Box::new(process), Box::new(disk)];
-        let worker_b: Vec<Box<dyn Collector>> = vec![Box::new(network), Box::new(gpu)];
+        // its own worker, never the hot thread. Extra collectors are
+        // distributed evenly across both by index.
+        let mut worker_a: Vec<Box<dyn Collector>> = vec![Box::new(process), Box::new(disk)];
+        let mut worker_b: Vec<Box<dyn Collector>> = vec![Box::new(network), Box::new(gpu)];
+        for (i, c) in extra_warm_collectors.into_iter().enumerate() {
+            if i % 2 == 0 {
+                worker_a.push(c);
+            } else {
+                worker_b.push(c);
+            }
+        }
 
         let mut handles = self.handles.lock().unwrap();
 
@@ -132,7 +145,7 @@ impl Scheduler {
                 Arc::clone(&self.visible),
                 Arc::clone(&self.warm_resume),
                 Arc::clone(&self.warm_wake),
-                Arc::clone(&sections),
+                Arc::clone(&self.sections),
             );
             handles.push(
                 std::thread::Builder::new()
@@ -154,6 +167,24 @@ impl Scheduler {
         for h in handles.drain(..) {
             let _ = h.join();
         }
+    }
+
+    /// The latest published TCP/UDP connection table, if a `Connections`
+    /// collector has run at least once. Read on demand (see
+    /// `src-tauri`'s `get_connections` command) rather than folded into
+    /// every hot frame — this can be a large, Warm-cadence dataset that
+    /// only the Network panel needs, and only while it's open.
+    pub fn latest_connections(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::ConnectionSnapshot>>> {
+        self.sections.lock().connections.clone()
+    }
+
+    /// The latest published SMBIOS inventory, if a `Hardware` collector has
+    /// run at least once. Same on-demand rationale as `latest_connections`;
+    /// this one is Cold-cadence and effectively static besides.
+    pub fn latest_hardware(&self) -> Option<crate::model::Sampled<crate::types::SmbiosInfo>> {
+        self.sections.lock().hardware.clone()
     }
 
     /// A throwaway `System`, refreshed once, for the one-shot `SystemInfo`
@@ -196,7 +227,7 @@ mod tests {
     #[test]
     fn stop_joins_every_thread_within_a_bound() {
         let scheduler = Scheduler::new();
-        scheduler.spawn();
+        scheduler.spawn(vec![]);
         scheduler.set_visible(true);
         std::thread::sleep(Duration::from_millis(50));
 
@@ -215,7 +246,7 @@ mod tests {
     #[test]
     fn hidden_scheduler_produces_no_frames() {
         let scheduler = Scheduler::new();
-        scheduler.spawn();
+        scheduler.spawn(vec![]);
         // Never call set_visible(true).
         let mailbox = scheduler.frame_mailbox();
         let frame = mailbox.take_timeout(Duration::from_millis(150));
@@ -230,7 +261,7 @@ mod tests {
         // to regardless of what's requested — use it directly so this test
         // observes the real cadence rather than a clamped one.
         scheduler.set_interval_ms(crate::settings::MIN_REFRESH_INTERVAL_MS);
-        scheduler.spawn();
+        scheduler.spawn(vec![]);
         scheduler.set_visible(true);
 
         let mailbox = scheduler.frame_mailbox();

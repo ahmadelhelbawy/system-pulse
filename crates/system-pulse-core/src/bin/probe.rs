@@ -113,7 +113,7 @@ fn main() {
     });
     let service = TelemetryService::new(sink);
     service.set_visible(!idle);
-    service.spawn();
+    service.spawn(vec![]); // no Windows-only collectors on this host
 
     std::thread::sleep(Duration::from_secs(seconds));
     service.stop();

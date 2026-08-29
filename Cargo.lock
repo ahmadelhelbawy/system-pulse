@@ -3516,6 +3516,7 @@ dependencies = [
  "serde",
  "serde_json",
  "system-pulse-core",
+ "system-pulse-win",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",
@@ -3537,6 +3538,15 @@ dependencies = [
  "sysinfo",
  "thiserror 2.0.20",
  "ts-rs",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "system-pulse-win"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "system-pulse-core",
  "windows 0.62.2",
 ]
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri", "crates/system-pulse-core"]
+members = ["src-tauri", "crates/system-pulse-core", "crates/system-pulse-win"]
 resolver = "2"
 
 [workspace.package]

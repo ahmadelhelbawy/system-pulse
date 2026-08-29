@@ -14,8 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::collector::Collector;
+use crate::model::Sampled;
 use crate::scheduler::Scheduler;
-use crate::types::{SystemInfo, TelemetrySnapshot};
+use crate::types::{ConnectionSnapshot, SmbiosInfo, SystemInfo, TelemetrySnapshot};
 
 /// A sink cannot keep up with the current frame rate; the frame is dropped
 /// (the next one will coalesce over it in the mailbox regardless).
@@ -60,10 +62,24 @@ impl TelemetryService {
         Scheduler::one_shot_system_info()
     }
 
+    /// The latest published TCP/UDP connection table — see
+    /// `Scheduler::latest_connections`.
+    pub fn latest_connections(&self) -> Option<Sampled<Vec<ConnectionSnapshot>>> {
+        self.scheduler.latest_connections()
+    }
+
+    /// The latest published SMBIOS inventory — see
+    /// `Scheduler::latest_hardware`.
+    pub fn latest_hardware(&self) -> Option<Sampled<SmbiosInfo>> {
+        self.scheduler.latest_hardware()
+    }
+
     /// Spawns the hot thread, the warm-tier worker pool, and a dedicated
-    /// emit thread that drains frames to the sink.
-    pub fn spawn(&self) {
-        self.scheduler.spawn();
+    /// emit thread that drains frames to the sink. `extra_collectors` are
+    /// Windows-only collectors (`system-pulse-win`) the caller constructs
+    /// and hands in — see `Scheduler::spawn`.
+    pub fn spawn(&self, extra_collectors: Vec<Box<dyn Collector>>) {
+        self.scheduler.spawn(extra_collectors);
 
         let mailbox = self.scheduler.frame_mailbox();
         let sink = Arc::clone(&self.sink);

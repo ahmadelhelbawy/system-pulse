@@ -23,6 +23,7 @@ function minimalSnapshot(timestampMs: number): TelemetrySnapshot {
     networks: unavailable,
     gpu: unavailable,
     processes: unavailable,
+    windowsInternal: unavailable,
     health: [],
   };
 }

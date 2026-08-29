@@ -30,8 +30,8 @@ use ts_rs::TS;
 use crate::model::UnixMillis;
 use crate::model::{Availability, Sampled};
 use crate::types::{
-    CpuSnapshot, DiskIoSnapshot, DiskSnapshot, GpuSnapshot, MemorySnapshot, NetworkSnapshot,
-    ProcessSnapshot,
+    ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, GpuSnapshot, MemorySnapshot,
+    NetworkSnapshot, ProcessSnapshot, SmbiosInfo, WindowsInternalState,
 };
 
 /// Identifies a collector for scheduling, logging, and capability reports.
@@ -45,6 +45,10 @@ pub enum CollectorId {
     Network,
     Gpu,
     Process,
+    WindowsInternal,
+    Connections,
+    Hardware,
+    PdhGpu,
 }
 
 /// How often a collector should run, and on which thread.
@@ -99,6 +103,27 @@ pub enum CollectorOutput {
         process_mem: HashMap<u32, u64>,
     },
     Process(Sampled<Vec<ProcessSnapshot>>),
+    /// `GetPerformanceInfo` (Phase 1B) — implemented in `system-pulse-win`.
+    WindowsInternal(Sampled<WindowsInternalState>),
+    /// `GetExtendedTcpTable`/`UdpTable` (Phase 1B) — implemented in
+    /// `system-pulse-win`. Not part of the hot frame: read on demand by the
+    /// `get_connections` IPC command so it only flows while the Network
+    /// panel is open, not into every 1 Hz frame regardless of who's looking.
+    Connections(Sampled<Vec<ConnectionSnapshot>>),
+    /// `GetSystemFirmwareTable('RSMB')` (Phase 1B) — implemented in
+    /// `system-pulse-win`. Cold/cache-forever; read on demand like
+    /// `Connections`, never part of the hot frame.
+    Hardware(Sampled<SmbiosInfo>),
+    /// PDH `\GPU Engine(*)` (Phase 1B) — implemented in `system-pulse-win`.
+    /// Per-process utilization is vendor-neutral and always attempted
+    /// regardless of NVML's presence (NVML never provided per-process
+    /// utilization, only VRAM); `device_fallback` is populated only when
+    /// NVML is unavailable, completing the fallback ladder described in the
+    /// master plan (NVML richest -> PDH vendor-neutral -> Unsupported).
+    PdhGpu {
+        per_process_percent: HashMap<u32, f32>,
+        device_fallback: Option<Sampled<Vec<GpuSnapshot>>>,
+    },
 }
 
 /// A pluggable source of telemetry.

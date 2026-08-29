@@ -15,7 +15,10 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 
 use crate::model::Sampled;
-use crate::types::{DiskIoSnapshot, DiskSnapshot, GpuSnapshot, NetworkSnapshot, ProcessSnapshot};
+use crate::types::{
+    ConnectionSnapshot, DiskIoSnapshot, DiskSnapshot, GpuSnapshot, NetworkSnapshot,
+    ProcessSnapshot, SmbiosInfo, WindowsInternalState,
+};
 
 #[derive(Default)]
 pub(crate) struct LatestSections {
@@ -25,6 +28,21 @@ pub(crate) struct LatestSections {
     pub gpu: Option<Sampled<Vec<GpuSnapshot>>>,
     pub gpu_process_mem: HashMap<u32, u64>,
     pub processes: Option<Sampled<Vec<ProcessSnapshot>>>,
+    // --- Phase 1B ---
+    pub windows_internal: Option<Sampled<WindowsInternalState>>,
+    /// Read on demand by `get_connections`, never folded into the hot
+    /// frame — see `CollectorOutput::Connections`.
+    pub connections: Option<Sampled<Vec<ConnectionSnapshot>>>,
+    /// Read on demand by `get_hardware_info`, never folded into the hot
+    /// frame — see `CollectorOutput::Hardware`.
+    pub hardware: Option<Sampled<SmbiosInfo>>,
+    /// pid -> GPU engine utilization percent, from PDH. Parallel to
+    /// `gpu_process_mem` (which comes from NVML); a pid may appear in
+    /// either map, both, or neither.
+    pub gpu_process_percent: HashMap<u32, f32>,
+    /// Device-level GPU stats from PDH, used only when NVML (`gpu` above)
+    /// is unavailable — see `CollectorOutput::PdhGpu`'s doc comment.
+    pub gpu_device_fallback: Option<Sampled<Vec<GpuSnapshot>>>,
 }
 
 pub(crate) type SharedSections = std::sync::Arc<Mutex<LatestSections>>;

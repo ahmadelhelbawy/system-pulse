@@ -5,6 +5,8 @@ import Toolbar from "./components/Toolbar";
 import OverviewPanel from "./components/OverviewPanel";
 import ProcessesPanel from "./components/ProcessesPanel";
 import GpuPanel from "./components/GpuPanel";
+import NetworkPanel from "./components/NetworkPanel";
+import HardwarePanel from "./components/HardwarePanel";
 import HealthPanel from "./components/HealthPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusBar from "./components/StatusBar";
@@ -113,6 +115,16 @@ export default function App() {
         {tab === "gpu" && (
           <ErrorBoundary label="GPU">
             <GpuPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "network" && (
+          <ErrorBoundary label="Network">
+            <NetworkPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "hardware" && (
+          <ErrorBoundary label="Hardware">
+            <HardwarePanel />
           </ErrorBoundary>
         )}
         {tab === "health" && (

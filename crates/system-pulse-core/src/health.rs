@@ -332,6 +332,7 @@ mod tests {
             cpu_percent: 2.0,
             memory: 600,
             gpu_mem: None,
+            gpu_percent: None,
             exe: None,
             user: None,
             started_at: None,

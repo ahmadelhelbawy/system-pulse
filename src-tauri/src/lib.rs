@@ -60,6 +60,8 @@ pub fn run() {
             ipc::is_elevated,
             ipc::get_system_info,
             ipc::get_capabilities,
+            ipc::get_connections,
+            ipc::get_hardware_info,
             ipc::quit,
         ])
         .build(tauri::generate_context!())

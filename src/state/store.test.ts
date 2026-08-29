@@ -40,6 +40,12 @@ function snapshotAt(t: number, cpuPercent: number, memPercent: number): Telemetr
       asOf: t,
     },
     processes: { value: [], availability: { state: "ok" }, source: "sysinfo", asOf: t },
+    windowsInternal: {
+      value: null,
+      availability: { state: "failed", code: "timeout", detail: null },
+      source: "perfInfo",
+      asOf: t,
+    },
     health: [],
   };
 }

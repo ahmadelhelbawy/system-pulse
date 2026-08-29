@@ -98,6 +98,14 @@ impl Sanitizer {
                     let redacted = redact_home_dir(mp);
                     d["mountPoint"] = Value::String(redacted);
                 }
+                // A disk `name` can itself be a host path (e.g. WSL2's 9p
+                // mounts report the Windows source path, such as
+                // `C:\Users\<name>\...`, as the device name) — the same
+                // leak `exe`/`mountPoint` already guard against.
+                if let Some(name) = d.get("name").and_then(Value::as_str) {
+                    let redacted = redact_home_dir(name);
+                    d["name"] = Value::String(redacted);
+                }
             }
         }
     }
@@ -154,6 +162,13 @@ impl Sanitizer {
 /// macOS) path segment with a fixed placeholder, leaving the rest of the path
 /// (and any non-home path entirely) intact — the directory structure below
 /// the home directory is useful replay context, the username is not.
+///
+/// Handles two spellings of the Windows separator: a literal `\` (the normal
+/// case), and the octal escape `\134` (134 octal = `\`) that `/proc/mounts`
+/// uses for backslash and that a WSL2 9p mount's disk `name` can carry
+/// through unescaped from the kernel's Windows source path — without this,
+/// a captured `C:\134Users\134<user>\134...` device name sails past the
+/// plain-backslash check and a real username reaches the committed fixture.
 fn redact_home_dir(path: &str) -> String {
     for prefix in ["/home/", "/Users/"] {
         if let Some(rest) = path.strip_prefix(prefix) {
@@ -163,13 +178,16 @@ fn redact_home_dir(path: &str) -> String {
             return format!("{prefix}USER");
         }
     }
-    if let Some(idx) = path.to_ascii_lowercase().find(r"c:\users\") {
-        let after = idx + r"c:\users\".len();
-        let rest = &path[after..];
-        if let Some(slash) = rest.find('\\') {
-            return format!("{}USER{}", &path[..after], &rest[slash..]);
+    for sep in ["\\", r"\134"] {
+        let needle = format!("c:{sep}users{sep}");
+        if let Some(idx) = path.to_ascii_lowercase().find(&needle) {
+            let after = idx + needle.len();
+            let rest = &path[after..];
+            if let Some(pos) = rest.find(sep) {
+                return format!("{}USER{}", &path[..after], &rest[pos..]);
+            }
+            return format!("{}USER", &path[..after]);
         }
-        return format!("{}USER", &path[..after]);
     }
     path.to_string()
 }

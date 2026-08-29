@@ -5,7 +5,9 @@
 //! only invoke the specific, audited operations declared here.
 
 use system_pulse_core::collector::{probe_capabilities, CollectorCapability};
+use system_pulse_core::model::Sampled;
 use system_pulse_core::process::{kill_process as core_kill_process, ProcessIdentity};
+use system_pulse_core::types::{ConnectionSnapshot, SmbiosInfo};
 use system_pulse_core::{Settings, SystemInfo};
 use tauri::{AppHandle, State};
 
@@ -70,10 +72,30 @@ pub fn get_system_info(state: State<'_, AppState>) -> SystemInfo {
 
 /// Reports what this machine can actually measure, independent of whether
 /// telemetry is currently running — "capability probing is a first-class
-/// startup phase" (see the master plan's provenance model).
+/// startup phase" (see the master plan's provenance model). Concatenates
+/// `system-pulse-core`'s own collectors with `system-pulse-win`'s, since
+/// core cannot depend on the Windows crate to enumerate them itself.
 #[tauri::command]
 pub fn get_capabilities() -> Vec<CollectorCapability> {
-    probe_capabilities()
+    let mut caps = probe_capabilities();
+    caps.extend(system_pulse_win::probe_capabilities());
+    caps
+}
+
+/// Network connections + owning PID (Warm 2s cadence) — an on-demand read
+/// of whatever the background collector last published, not a live push;
+/// the Network panel is expected to poll this while it's the active tab
+/// rather than receiving every 2s tick unconditionally.
+#[tauri::command]
+pub fn get_connections(state: State<'_, AppState>) -> Option<Sampled<Vec<ConnectionSnapshot>>> {
+    state.telemetry.latest_connections()
+}
+
+/// Motherboard/BIOS/DIMM inventory (Cold cadence, cached forever after the
+/// first successful read) — same on-demand-read shape as `get_connections`.
+#[tauri::command]
+pub fn get_hardware_info(state: State<'_, AppState>) -> Option<Sampled<SmbiosInfo>> {
+    state.telemetry.latest_hardware()
 }
 
 #[tauri::command]

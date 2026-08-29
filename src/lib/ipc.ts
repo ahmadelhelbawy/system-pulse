@@ -7,8 +7,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AppError,
   CollectorCapability,
+  ConnectionSnapshot,
   ProcessIdentity,
+  Sampled,
   Settings,
+  SmbiosInfo,
   SystemInfo,
   TelemetrySnapshot,
 } from "./contracts";
@@ -28,6 +31,13 @@ export const api = {
   isElevated: () => invoke<boolean>("is_elevated"),
   getSystemInfo: () => invoke<SystemInfo>("get_system_info"),
   getCapabilities: () => invoke<CollectorCapability[]>("get_capabilities"),
+  // Both are on-demand reads of whatever the background Warm/Cold collector
+  // last published — `null` before that collector's first successful tick,
+  // not a fabricated empty result. Poll while the owning panel is active.
+  getConnections: () =>
+    invoke<Sampled<ConnectionSnapshot[]> | null>("get_connections"),
+  getHardwareInfo: () =>
+    invoke<Sampled<SmbiosInfo> | null>("get_hardware_info"),
   quit: () => invoke<void>("quit"),
 };
 

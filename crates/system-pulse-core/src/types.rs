@@ -32,6 +32,10 @@ pub struct TelemetrySnapshot {
     pub networks: Sampled<Vec<NetworkSnapshot>>,
     pub gpu: Sampled<Vec<GpuSnapshot>>,
     pub processes: Sampled<Vec<ProcessSnapshot>>,
+    /// Handles/threads/process count/commit/pool/cache (Phase 1B). Hot
+    /// cadence pending real-hardware timing validation — see
+    /// `system-pulse-win::perf_info`'s module doc.
+    pub windows_internal: Sampled<WindowsInternalState>,
     /// Derived/computed, not collected from hardware — provenance doesn't
     /// apply the same way, so this stays a plain list. Reshaped into a
     /// scored `HealthScore` in Phase 2; untouched here.
@@ -135,6 +139,11 @@ pub struct ProcessSnapshot {
     pub cpu_percent: f32,
     pub memory: u64,
     pub gpu_mem: Option<u64>,
+    /// Per-process GPU engine utilization, 0..=100. Sourced from PDH's
+    /// `\GPU Engine(*)\Utilization Percentage` (Phase 1B) — vendor-neutral,
+    /// unlike `gpu_mem` which NVML provides only for NVIDIA. `None` when
+    /// neither source has data for this process, not a fabricated `0`.
+    pub gpu_percent: Option<f32>,
     pub exe: Option<String>,
     pub user: Option<String>,
     /// Process creation time, backing `ProcessIdentity` — required so
@@ -179,6 +188,99 @@ pub struct SystemInfo {
     pub total_memory: u64,
 }
 
+/// Windows internal state from a single `GetPerformanceInfo` call
+/// (Phase 1B) — handles/threads/process count and the commit/pool/cache
+/// figures Task Manager's Performance tab derives its "Committed" and
+/// "Cached" numbers from. All byte fields are `PageSize * <count>`; the
+/// raw struct reports pages, not bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WindowsInternalState {
+    pub handle_count: u32,
+    pub process_count: u32,
+    pub thread_count: u32,
+    pub commit_total: u64,
+    pub commit_limit: u64,
+    pub kernel_paged_pool: u64,
+    pub kernel_non_paged_pool: u64,
+    pub system_cache: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum TransportProtocol {
+    Tcp,
+    Udp,
+}
+
+/// TCP connection states (`MIB_TCP_STATE`). Always `None` for UDP, which is
+/// connectionless.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TcpState {
+    Closed,
+    Listen,
+    SynSent,
+    SynReceived,
+    Established,
+    FinWait1,
+    FinWait2,
+    CloseWait,
+    Closing,
+    LastAck,
+    TimeWait,
+    DeleteTcb,
+}
+
+/// One row from `GetExtendedTcpTable`/`GetExtendedUdpTable`
+/// (`*_OWNER_PID_ALL`, Phase 1B) — process↔network attribution and
+/// listening ports, unelevated. `pid` is `Some` whenever Windows could
+/// attribute the connection to a process (always, in practice, for
+/// `OWNER_PID` tables; modeled as optional because the underlying API
+/// contract doesn't guarantee it).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectionSnapshot {
+    pub protocol: TransportProtocol,
+    pub local_addr: String,
+    pub local_port: u16,
+    pub remote_addr: String,
+    pub remote_port: u16,
+    pub state: Option<TcpState>,
+    pub pid: Option<u32>,
+}
+
+/// One DIMM entry from an SMBIOS Type 17 (Memory Device) structure.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DimmInfo {
+    pub manufacturer: Option<String>,
+    pub part_number: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub speed_mts: Option<u32>,
+}
+
+/// Board/BIOS/DIMM inventory parsed from the SMBIOS table
+/// (`GetSystemFirmwareTable('RSMB')`, Phase 1B). Cold cadence, cached
+/// forever after the first successful probe — this data cannot change
+/// while the machine is running.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmbiosInfo {
+    pub board_vendor: Option<String>,
+    pub board_product: Option<String>,
+    pub bios_vendor: Option<String>,
+    pub bios_version: Option<String>,
+    pub bios_release_date: Option<String>,
+    pub dimms: Vec<DimmInfo>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,11 +320,17 @@ mod tests {
                     cpu_percent: 0.0,
                     memory: 1024,
                     gpu_mem: None,
+                    gpu_percent: None,
                     exe: None,
                     user: None,
                     started_at: Some(UnixMillis(0)),
                 }],
                 Source::Sysinfo,
+                UnixMillis(1),
+            ),
+            windows_internal: Sampled::ok(
+                WindowsInternalState::default(),
+                Source::PerfInfo,
                 UnixMillis(1),
             ),
             health: vec![HealthAlert {

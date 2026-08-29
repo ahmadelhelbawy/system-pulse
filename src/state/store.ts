@@ -20,7 +20,14 @@ import type {
 } from "../lib/contracts";
 import { DEFAULT_SETTINGS } from "../lib/contracts";
 
-export type Tab = "overview" | "processes" | "gpu" | "health" | "settings";
+export type Tab =
+  | "overview"
+  | "processes"
+  | "gpu"
+  | "network"
+  | "hardware"
+  | "health"
+  | "settings";
 
 export type ProcessSortKey = "cpu" | "memory" | "name" | "pid";
 export type ProcessSortDir = "asc" | "desc";
