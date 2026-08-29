@@ -642,6 +642,94 @@ kbd {
   max-width: 720px;
 }
 
+.health__score {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-8);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.health__overall {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.health__domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}
+
+.health__domain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  min-width: 64px;
+}
+
+.health__domain-name {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.health__domain-score {
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ---- Trends ---- */
+.trends {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.trends__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.trends__group {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.trends__chart {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+}
+
+.trends__line {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.trends__gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.trends__axis-label {
+  fill: var(--text-faint);
+  font-size: var(--text-2xs);
+  font-family: var(--mono);
+}
+
 .alert {
   display: flex;
   align-items: center;

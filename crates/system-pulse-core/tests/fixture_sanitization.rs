@@ -67,14 +67,25 @@ fn replay_fixtures_contain_no_known_pii_patterns() {
                     line_no + 1
                 );
                 assert!(
-                    !has_home_username(s, "/home/", '/'),
+                    !has_home_username(s, "/home/", "/"),
                     "{}:{}: leaked a /home/<name>/ path with a real username: {s:?} (expected /home/USER/)",
                     path.display(),
                     line_no + 1
                 );
                 assert!(
-                    !has_home_username_case_insensitive(s, r"C:\Users\", '\\'),
+                    !has_home_username_case_insensitive(s, r"C:\Users\", "\\"),
                     "{}:{}: leaked a C:\\Users\\<name>\\ path with a real username: {s:?} (expected \\USER\\)",
+                    path.display(),
+                    line_no + 1
+                );
+                // `/proc/mounts`-style octal escaping (134 octal = `\`) is
+                // how a WSL2 9p mount's disk `name` can carry a Windows
+                // source path through un-decoded — the same leak shape as
+                // the plain-backslash check above, just spelled
+                // differently. See sanitize.rs's `redact_home_dir` doc.
+                assert!(
+                    !has_home_username_case_insensitive(s, r"C:\134Users\134", "\\134"),
+                    "{}:{}: leaked an octal-escaped C:\\134Users\\134<name>\\134 path with a real username: {s:?} (expected \\134USER\\134)",
                     path.display(),
                     line_no + 1
                 );
@@ -103,7 +114,7 @@ fn collect_strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
 
 /// True if `s` contains `prefix` followed by a path segment that isn't the
 /// sanitizer's `USER` placeholder — i.e. a real username slipped through.
-fn has_home_username(s: &str, prefix: &str, separator: char) -> bool {
+fn has_home_username(s: &str, prefix: &str, separator: &str) -> bool {
     let mut rest = s;
     while let Some(idx) = rest.find(prefix) {
         let after = &rest[idx + prefix.len()..];
@@ -117,7 +128,7 @@ fn has_home_username(s: &str, prefix: &str, separator: char) -> bool {
     false
 }
 
-fn has_home_username_case_insensitive(s: &str, prefix: &str, separator: char) -> bool {
+fn has_home_username_case_insensitive(s: &str, prefix: &str, separator: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     let Some(idx) = lower.find(&prefix.to_ascii_lowercase()) else {
         return false;
@@ -131,12 +142,12 @@ mod self_tests {
 
     #[test]
     fn detects_real_linux_username_but_not_placeholder() {
-        assert!(has_home_username("/home/helbawi/.codex/bin", "/home/", '/'));
-        assert!(!has_home_username("/home/USER/.codex/bin", "/home/", '/'));
+        assert!(has_home_username("/home/helbawi/.codex/bin", "/home/", "/"));
+        assert!(!has_home_username("/home/USER/.codex/bin", "/home/", "/"));
         assert!(!has_home_username(
             "/usr/libexec/xdg-document-portal",
             "/home/",
-            '/'
+            "/"
         ));
     }
 
@@ -145,12 +156,26 @@ mod self_tests {
         assert!(has_home_username_case_insensitive(
             r"C:\Users\ahmed\AppData\Local\foo.exe",
             r"C:\Users\",
-            '\\'
+            "\\"
         ));
         assert!(!has_home_username_case_insensitive(
             r"C:\Users\USER\AppData\Local\foo.exe",
             r"C:\Users\",
-            '\\'
+            "\\"
+        ));
+    }
+
+    #[test]
+    fn detects_octal_escaped_windows_username_but_not_placeholder() {
+        assert!(has_home_username_case_insensitive(
+            r"C:\134Users\134ahmed\134AppData\134Local\134foo.exe",
+            r"C:\134Users\134",
+            "\\134"
+        ));
+        assert!(!has_home_username_case_insensitive(
+            r"C:\134Users\134USER\134AppData\134Local\134foo.exe",
+            r"C:\134Users\134",
+            "\\134"
         ));
     }
 

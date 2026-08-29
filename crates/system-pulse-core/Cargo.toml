@@ -17,6 +17,15 @@ path = "src/bin/probe.rs"
 name = "sanitize"
 path = "src/bin/sanitize.rs"
 
+[features]
+default = ["history"]
+# SQLite-backed history store (samples_raw + rollups). A Cargo feature per
+# the master plan, not a runtime flag: rusqlite (bundled) adds a compiled-C
+# dependency, and this makes it possible to build/test the rest of the
+# engine without that dependency if it ever becomes a problem on a given
+# host/toolchain (e.g. the Windows MSVC cross-check environment).
+history = ["dep:rusqlite"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,6 +34,7 @@ sysinfo = "0.39"
 nvml-wrapper = "0.12"
 parking_lot = "0.12"
 ts-rs = "12.0.1"
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

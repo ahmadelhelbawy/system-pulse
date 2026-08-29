@@ -5,6 +5,7 @@
 //! only invoke the specific, audited operations declared here.
 
 use system_pulse_core::collector::{probe_capabilities, CollectorCapability};
+use system_pulse_core::history::{HistoryPoint, SeriesId, TimeRange};
 use system_pulse_core::model::Sampled;
 use system_pulse_core::process::{kill_process as core_kill_process, ProcessIdentity};
 use system_pulse_core::types::{ConnectionSnapshot, SmbiosInfo};
@@ -96,6 +97,23 @@ pub fn get_connections(state: State<'_, AppState>) -> Option<Sampled<Vec<Connect
 #[tauri::command]
 pub fn get_hardware_info(state: State<'_, AppState>) -> Option<Sampled<SmbiosInfo>> {
     state.telemetry.latest_hardware()
+}
+
+/// Queries recorded telemetry history for the Trends panel. `range`/`series`
+/// select what to fetch; the backend picks the coarsest rollup granularity
+/// that still covers the range (see `system_pulse_core::history::HistoryStore`)
+/// so a wide range stays fast without the frontend needing to know about
+/// rollups at all.
+#[tauri::command]
+pub fn query_history(
+    state: State<'_, AppState>,
+    range: TimeRange,
+    series: SeriesId,
+) -> Result<Vec<HistoryPoint>, AppError> {
+    state
+        .telemetry
+        .query_history(range, series)
+        .map_err(AppError::from)
 }
 
 #[tauri::command]

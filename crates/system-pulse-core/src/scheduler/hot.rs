@@ -8,8 +8,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::alerts::AlertEngine;
 use crate::collector::{CollectCtx, Collector, CollectorOutput, CpuCollector, MemoryCollector};
 use crate::health::{analyze, HealthInput};
+use crate::history::{HistorySample, HistoryWriter};
 use crate::model::{Sampled, UnixMillis};
 use crate::settings::{MAX_REFRESH_INTERVAL_MS, MIN_REFRESH_INTERVAL_MS};
 use crate::transport::Mailbox;
@@ -26,6 +28,8 @@ pub(crate) struct HotLoop {
     cpu: CpuCollector,
     memory: MemoryCollector,
     cpu_history: Vec<f32>,
+    alert_engine: AlertEngine,
+    history: Option<Arc<HistoryWriter>>,
     sections: SharedSections,
     frame_out: Mailbox<TelemetrySnapshot>,
     shutdown: Arc<AtomicBool>,
@@ -47,11 +51,14 @@ impl HotLoop {
         resume_pending: Arc<AtomicBool>,
         interval_ms: Arc<AtomicU64>,
         wake: Arc<WakeSignal>,
+        history: Option<Arc<HistoryWriter>>,
     ) -> Self {
         Self {
             cpu,
             memory,
             cpu_history: Vec::with_capacity(CPU_HISTORY_LEN),
+            alert_engine: AlertEngine::new(),
+            history,
             sections,
             frame_out,
             shutdown,
@@ -102,6 +109,7 @@ impl HotLoop {
             }
 
             let snapshot = self.assemble(ctx.wall_now, cpu, memory);
+            self.record_history(&snapshot);
             self.frame_out.put(snapshot);
 
             let interval = Duration::from_millis(
@@ -113,8 +121,50 @@ impl HotLoop {
         }
     }
 
+    /// Best-effort: absent when no history path was configured, or the
+    /// writer's channel is full (in which case `record` itself already
+    /// counts the drop — see `history::HistoryWriter`). Never blocks the
+    /// hot loop either way.
+    fn record_history(&self, snapshot: &TelemetrySnapshot) {
+        let Some(writer) = &self.history else {
+            return;
+        };
+        let gpu_percent = snapshot.gpu.value.as_ref().and_then(|gpus| {
+            let readings: Vec<f32> = gpus.iter().filter_map(|g| g.utilization_percent).collect();
+            if readings.is_empty() {
+                None
+            } else {
+                Some(readings.iter().sum::<f32>() as f64 / readings.len() as f64)
+            }
+        });
+        let net_download_rate = snapshot
+            .networks
+            .value
+            .as_ref()
+            .map(|nets| nets.iter().map(|n| n.download_rate).sum());
+        let net_upload_rate = snapshot
+            .networks
+            .value
+            .as_ref()
+            .map(|nets| nets.iter().map(|n| n.upload_rate).sum());
+        writer.record(HistorySample {
+            ts_ms: snapshot.timestamp_ms,
+            cpu_percent: snapshot.cpu.value.as_ref().map(|c| c.total_percent as f64),
+            mem_used_percent: snapshot
+                .memory
+                .value
+                .as_ref()
+                .map(|m| m.used_percent as f64),
+            gpu_percent,
+            disk_read_rate: snapshot.disk_io.value.as_ref().map(|d| d.read_rate),
+            disk_write_rate: snapshot.disk_io.value.as_ref().map(|d| d.write_rate),
+            net_download_rate,
+            net_upload_rate,
+        });
+    }
+
     fn assemble(
-        &self,
+        &mut self,
         as_of: UnixMillis,
         cpu: Sampled<crate::types::CpuSnapshot>,
         memory: Sampled<crate::types::MemorySnapshot>,
@@ -182,7 +232,7 @@ impl HotLoop {
         let empty_disks = Vec::new();
         let empty_gpu = Vec::new();
         let empty_procs = Vec::new();
-        let health = analyze(&HealthInput {
+        let candidates = analyze(&HealthInput {
             cpu_percent: cpu.value.as_ref().map(|c| c.total_percent).unwrap_or(0.0),
             cpu_history: &self.cpu_history,
             memory_used_percent: memory.value.as_ref().map(|m| m.used_percent).unwrap_or(0.0),
@@ -191,6 +241,11 @@ impl HotLoop {
             disks: disks.value.as_deref().unwrap_or(&empty_disks),
             gpu: gpu.value.as_deref().unwrap_or(&empty_gpu),
         });
+        // Score on the debounced alerts, not the raw per-tick candidates —
+        // scoring on undebounced input would make the score exactly as
+        // flappy as the alerts it's built from claim not to be.
+        let stabilized = self.alert_engine.evaluate(candidates);
+        let health = crate::analysis::score(&stabilized);
 
         TelemetrySnapshot {
             timestamp_ms: as_of,

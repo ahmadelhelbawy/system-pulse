@@ -74,12 +74,26 @@ impl TelemetryService {
         self.scheduler.latest_hardware()
     }
 
+    /// Queries recorded history — see `Scheduler::query_history`.
+    pub fn query_history(
+        &self,
+        range: crate::history::TimeRange,
+        series: crate::history::SeriesId,
+    ) -> Result<Vec<crate::history::HistoryPoint>, crate::history::HistoryError> {
+        self.scheduler.query_history(range, series)
+    }
+
     /// Spawns the hot thread, the warm-tier worker pool, and a dedicated
     /// emit thread that drains frames to the sink. `extra_collectors` are
     /// Windows-only collectors (`system-pulse-win`) the caller constructs
-    /// and hands in — see `Scheduler::spawn`.
-    pub fn spawn(&self, extra_collectors: Vec<Box<dyn Collector>>) {
-        self.scheduler.spawn(extra_collectors);
+    /// and hands in; `history_db_path` opts into recording telemetry
+    /// history — see `Scheduler::spawn`.
+    pub fn spawn(
+        &self,
+        extra_collectors: Vec<Box<dyn Collector>>,
+        history_db_path: Option<std::path::PathBuf>,
+    ) {
+        self.scheduler.spawn(extra_collectors, history_db_path);
 
         let mailbox = self.scheduler.frame_mailbox();
         let sink = Arc::clone(&self.sink);

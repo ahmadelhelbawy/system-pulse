@@ -46,7 +46,7 @@ function snapshotAt(t: number, cpuPercent: number, memPercent: number): Telemetr
       source: "perfInfo",
       asOf: t,
     },
-    health: [],
+    health: { overall: 100, domains: [], alerts: [] },
   };
 }
 

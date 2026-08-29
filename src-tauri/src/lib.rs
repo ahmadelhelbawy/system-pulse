@@ -62,6 +62,7 @@ pub fn run() {
             ipc::get_capabilities,
             ipc::get_connections,
             ipc::get_hardware_info,
+            ipc::query_history,
             ipc::quit,
         ])
         .build(tauri::generate_context!())

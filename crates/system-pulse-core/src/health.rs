@@ -2,7 +2,10 @@
 //!
 //! The analyzer is a pure function over a telemetry frame: no history state,
 //! no network, no ML. "Sustained" CPU is approximated by passing a small
-//! rolling window of recent total-CPU samples in `cpu_history`.
+//! rolling window of recent total-CPU samples in `cpu_history`. Alert
+//! *hysteresis* (debouncing raise/clear across ticks) is a separate
+//! concern, layered on top by `crate::alerts::AlertEngine` — this module
+//! only ever answers "is this condition true right now."
 
 use crate::types::{DiskSnapshot, GpuSnapshot, HealthAlert, ProcessSnapshot, Severity};
 
@@ -59,29 +62,62 @@ fn severity_rank(s: Severity) -> u8 {
     }
 }
 
+/// Constructs an alert and its stable `id` in one place — `category` +
+/// `title` + `pid` is the identity `crate::alerts::AlertEngine` debounces
+/// on, so every call site building a `HealthAlert` goes through here
+/// rather than the struct literal directly, which would make it easy for a
+/// new call site to forget the id (or compute it inconsistently). A
+/// severity change between two thresholds of the *same* check (e.g.
+/// memory warning → critical) intentionally has a different `title` and
+/// therefore a different id: it resets that alert's hysteresis rather than
+/// instantly reflecting the new severity, which is the conservative,
+/// flap-resistant choice for a threshold crossing rather than a
+/// continuously-updating measurement.
+fn push_alert(
+    alerts: &mut Vec<HealthAlert>,
+    severity: Severity,
+    category: &str,
+    title: String,
+    detail: String,
+    pid: Option<u32>,
+) {
+    let id = match pid {
+        Some(pid) => format!("{category}:{title}:{pid}"),
+        None => format!("{category}:{title}"),
+    };
+    alerts.push(HealthAlert {
+        id,
+        severity,
+        category: category.to_string(),
+        title,
+        detail,
+        pid,
+    });
+}
+
 fn analyze_memory(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
+    let detail = format!(
+        "{:.0}% of physical memory is in use",
+        input.memory_used_percent
+    );
     if input.memory_used_percent >= MEM_CRITICAL {
-        alerts.push(HealthAlert {
-            severity: Severity::Critical,
-            category: "memory".into(),
-            title: "Memory critically low".into(),
-            detail: format!(
-                "{:.0}% of physical memory is in use",
-                input.memory_used_percent
-            ),
-            pid: None,
-        });
+        push_alert(
+            alerts,
+            Severity::Critical,
+            "memory",
+            "Memory critically low".into(),
+            detail,
+            None,
+        );
     } else if input.memory_used_percent >= MEM_WARNING {
-        alerts.push(HealthAlert {
-            severity: Severity::Warning,
-            category: "memory".into(),
-            title: "Memory usage high".into(),
-            detail: format!(
-                "{:.0}% of physical memory is in use",
-                input.memory_used_percent
-            ),
-            pid: None,
-        });
+        push_alert(
+            alerts,
+            Severity::Warning,
+            "memory",
+            "Memory usage high".into(),
+            detail,
+            None,
+        );
     }
 }
 
@@ -98,23 +134,26 @@ fn analyze_cpu(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
     } else {
         recent.iter().sum::<f32>() / recent.len() as f32
     };
+    let detail = format!("CPU has averaged {mean:.0}% over the last few samples");
 
     if mean >= CPU_SUSTAINED_CRITICAL {
-        alerts.push(HealthAlert {
-            severity: Severity::Critical,
-            category: "cpu".into(),
-            title: "Sustained CPU saturation".into(),
-            detail: format!("CPU has averaged {mean:.0}% over the last few samples"),
-            pid: None,
-        });
+        push_alert(
+            alerts,
+            Severity::Critical,
+            "cpu",
+            "Sustained CPU saturation".into(),
+            detail,
+            None,
+        );
     } else if mean >= CPU_SUSTAINED_WARNING {
-        alerts.push(HealthAlert {
-            severity: Severity::Warning,
-            category: "cpu".into(),
-            title: "Sustained high CPU".into(),
-            detail: format!("CPU has averaged {mean:.0}% over the last few samples"),
-            pid: None,
-        });
+        push_alert(
+            alerts,
+            Severity::Warning,
+            "cpu",
+            "Sustained high CPU".into(),
+            detail,
+            None,
+        );
     }
 }
 
@@ -124,43 +163,43 @@ fn analyze_processes(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
     }
     for p in input.processes {
         let mem_frac = p.memory as f32 / input.memory_total as f32;
+        let mem_detail = format!(
+            "{} is using {:.0}% of physical memory",
+            p.name,
+            mem_frac * 100.0
+        );
         if mem_frac >= PROCESS_MEM_CRITICAL_FRAC {
-            alerts.push(HealthAlert {
-                severity: Severity::Critical,
-                category: "process".into(),
-                title: format!("{} is using a lot of memory", p.name),
-                detail: format!(
-                    "{} is using {:.0}% of physical memory",
-                    p.name,
-                    mem_frac * 100.0
-                ),
-                pid: Some(p.pid),
-            });
+            push_alert(
+                alerts,
+                Severity::Critical,
+                "process",
+                format!("{} is using a lot of memory", p.name),
+                mem_detail,
+                Some(p.pid),
+            );
         } else if mem_frac >= PROCESS_MEM_WARNING_FRAC {
-            alerts.push(HealthAlert {
-                severity: Severity::Warning,
-                category: "process".into(),
-                title: format!("{} is using a lot of memory", p.name),
-                detail: format!(
-                    "{} is using {:.0}% of physical memory",
-                    p.name,
-                    mem_frac * 100.0
-                ),
-                pid: Some(p.pid),
-            });
+            push_alert(
+                alerts,
+                Severity::Warning,
+                "process",
+                format!("{} is using a lot of memory", p.name),
+                mem_detail,
+                Some(p.pid),
+            );
         }
 
         if p.cpu_percent >= PROCESS_CPU_FULL_CORE {
-            alerts.push(HealthAlert {
-                severity: Severity::Warning,
-                category: "process".into(),
-                title: format!("{} is CPU-heavy", p.name),
-                detail: format!(
-                    "{} is using {:.0}% CPU (≥ one full core)",
+            push_alert(
+                alerts,
+                Severity::Warning,
+                "process",
+                format!("{} is CPU-heavy", p.name),
+                format!(
+                    "{} is using {:.0}% CPU (\u{2265} one full core)",
                     p.name, p.cpu_percent
                 ),
-                pid: Some(p.pid),
-            });
+                Some(p.pid),
+            );
         }
     }
 }
@@ -169,57 +208,64 @@ fn analyze_disks(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
     let mut total_io = 0.0_f64;
     for d in input.disks {
         total_io += d.read_rate + d.write_rate;
+        let detail = format!("{:.0}% of {} is used", d.used_percent, d.name);
         if d.used_percent >= DISK_FULL_CRITICAL {
-            alerts.push(HealthAlert {
-                severity: Severity::Critical,
-                category: "disk".into(),
-                title: format!("Disk {} is nearly full", d.name),
-                detail: format!("{:.0}% of {} is used", d.used_percent, d.name),
-                pid: None,
-            });
+            push_alert(
+                alerts,
+                Severity::Critical,
+                "disk",
+                format!("Disk {} is nearly full", d.name),
+                detail,
+                None,
+            );
         } else if d.used_percent >= DISK_FULL_WARNING {
-            alerts.push(HealthAlert {
-                severity: Severity::Warning,
-                category: "disk".into(),
-                title: format!("Disk {} is filling up", d.name),
-                detail: format!("{:.0}% of {} is used", d.used_percent, d.name),
-                pid: None,
-            });
+            push_alert(
+                alerts,
+                Severity::Warning,
+                "disk",
+                format!("Disk {} is filling up", d.name),
+                detail,
+                None,
+            );
         }
     }
     if total_io >= DISK_ACTIVITY_BYTES_PER_SEC {
-        alerts.push(HealthAlert {
-            severity: Severity::Info,
-            category: "disk".into(),
-            title: "High disk activity".into(),
-            detail: format!(
+        push_alert(
+            alerts,
+            Severity::Info,
+            "disk",
+            "High disk activity".into(),
+            format!(
                 "Aggregate disk throughput is {:.0} MB/s",
                 total_io / (1024.0 * 1024.0)
             ),
-            pid: None,
-        });
+            None,
+        );
     }
 }
 
 fn analyze_gpu(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
     for g in input.gpu {
         if let Some(util) = g.utilization_percent {
+            let detail = format!("{util:.0}% GPU utilization");
             if util >= GPU_UTIL_CRITICAL {
-                alerts.push(HealthAlert {
-                    severity: Severity::Critical,
-                    category: "gpu".into(),
-                    title: format!("GPU {} is saturated", g.name),
-                    detail: format!("{:.0}% GPU utilization", util),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Critical,
+                    "gpu",
+                    format!("GPU {} is saturated", g.name),
+                    detail,
+                    None,
+                );
             } else if util >= GPU_UTIL_WARNING {
-                alerts.push(HealthAlert {
-                    severity: Severity::Warning,
-                    category: "gpu".into(),
-                    title: format!("GPU {} utilization high", g.name),
-                    detail: format!("{:.0}% GPU utilization", util),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Warning,
+                    "gpu",
+                    format!("GPU {} utilization high", g.name),
+                    detail,
+                    None,
+                );
             }
         }
 
@@ -229,42 +275,48 @@ fn analyze_gpu(input: &HealthInput, alerts: &mut Vec<HealthAlert>) {
             } else {
                 used as f32 / total as f32 * 100.0
             };
+            let detail = format!("{frac:.0}% VRAM in use");
             if frac >= VRAM_CRITICAL {
-                alerts.push(HealthAlert {
-                    severity: Severity::Critical,
-                    category: "gpu".into(),
-                    title: format!("GPU {} VRAM nearly exhausted", g.name),
-                    detail: format!("{:.0}% VRAM in use", frac),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Critical,
+                    "gpu",
+                    format!("GPU {} VRAM nearly exhausted", g.name),
+                    detail,
+                    None,
+                );
             } else if frac >= VRAM_WARNING {
-                alerts.push(HealthAlert {
-                    severity: Severity::Warning,
-                    category: "gpu".into(),
-                    title: format!("GPU {} VRAM usage high", g.name),
-                    detail: format!("{:.0}% VRAM in use", frac),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Warning,
+                    "gpu",
+                    format!("GPU {} VRAM usage high", g.name),
+                    detail,
+                    None,
+                );
             }
         }
 
         if let Some(temp) = g.temperature_c {
+            let detail = format!("{temp}\u{b0}C");
             if temp >= GPU_TEMP_CRITICAL {
-                alerts.push(HealthAlert {
-                    severity: Severity::Critical,
-                    category: "gpu".into(),
-                    title: format!("GPU {} is very hot", g.name),
-                    detail: format!("{temp}°C"),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Critical,
+                    "gpu",
+                    format!("GPU {} is very hot", g.name),
+                    detail,
+                    None,
+                );
             } else if temp >= GPU_TEMP_WARNING {
-                alerts.push(HealthAlert {
-                    severity: Severity::Warning,
-                    category: "gpu".into(),
-                    title: format!("GPU {} is warm", g.name),
-                    detail: format!("{temp}°C"),
-                    pid: None,
-                });
+                push_alert(
+                    alerts,
+                    Severity::Warning,
+                    "gpu",
+                    format!("GPU {} is warm", g.name),
+                    detail,
+                    None,
+                );
             }
         }
     }
@@ -390,5 +442,37 @@ mod tests {
             gpu: &[],
         };
         assert!(analyze(&input).is_empty());
+    }
+
+    #[test]
+    fn two_distinct_alerts_for_the_same_process_get_distinct_ids() {
+        // A process that's both memory-hungry and CPU-heavy must produce
+        // two separate alerts, not one clobbering the other — this is
+        // exactly the collision `push_alert`'s id scheme (category+title
+        // +pid, not just category+pid) exists to avoid.
+        let processes = [ProcessSnapshot {
+            pid: 99,
+            name: "hog".into(),
+            cpu_percent: 150.0,
+            memory: 900,
+            gpu_mem: None,
+            gpu_percent: None,
+            exe: None,
+            user: None,
+            started_at: None,
+        }];
+        let input = HealthInput {
+            cpu_percent: 0.0,
+            cpu_history: &[],
+            memory_used_percent: 10.0,
+            memory_total: 1000,
+            processes: &processes,
+            disks: &[],
+            gpu: &[],
+        };
+        let alerts = analyze(&input);
+        let process_alerts: Vec<_> = alerts.iter().filter(|a| a.pid == Some(99)).collect();
+        assert_eq!(process_alerts.len(), 2);
+        assert_ne!(process_alerts[0].id, process_alerts[1].id);
     }
 }

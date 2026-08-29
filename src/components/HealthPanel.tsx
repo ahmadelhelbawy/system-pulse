@@ -1,11 +1,11 @@
-import type { HealthAlert } from "../lib/contracts";
+import type { DomainHealth, HealthScore } from "../lib/contracts";
 import { useStore } from "../state/store";
 import Badge from "./common/Badge";
 import EmptyState from "./common/EmptyState";
 
 // A stable reference for the "no snapshot yet" case — see the matching
 // comment in GpuPanel.tsx for why an inline `?? []` would otherwise loop.
-const EMPTY_HEALTH: HealthAlert[] = [];
+const EMPTY_HEALTH: HealthScore = { overall: 100, domains: [], alerts: [] };
 
 export default function HealthPanel() {
   const health = useStore((s) => s.snapshot?.health ?? EMPTY_HEALTH);
@@ -16,37 +16,54 @@ export default function HealthPanel() {
   if (!hasSnapshot) {
     return <EmptyState title="Waiting for telemetry…" />;
   }
-  if (health.length === 0) {
-    return (
-      <EmptyState
-        title="All clear"
-        detail="No unusual resource consumption detected right now."
-      />
-    );
-  }
 
   return (
     <div className="health">
-      {health.map((alert, i) => (
-        <div key={`${alert.category}-${i}`} className={`alert alert--${alert.severity}`}>
-          <Badge severity={alert.severity} />
-          <div className="alert__body">
-            <div className="alert__title">{alert.title}</div>
-            <div className="alert__detail">{alert.detail}</div>
-          </div>
-          {alert.pid != null && (
-            <button
-              className="button button--ghost"
-              onClick={() => {
-                selectProcess(alert.pid);
-                setTab("processes");
-              }}
-            >
-              View process
-            </button>
-          )}
+      <div className="health__score">
+        <div className="health__overall">{health.overall}</div>
+        <div className="health__domains">
+          {health.domains.map((d) => (
+            <DomainGauge key={d.domain} domain={d} />
+          ))}
         </div>
-      ))}
+      </div>
+
+      {health.alerts.length === 0 ? (
+        <EmptyState
+          title="All clear"
+          detail="No unusual resource consumption detected right now."
+        />
+      ) : (
+        health.alerts.map((alert) => (
+          <div key={alert.id} className={`alert alert--${alert.severity}`}>
+            <Badge severity={alert.severity} />
+            <div className="alert__body">
+              <div className="alert__title">{alert.title}</div>
+              <div className="alert__detail">{alert.detail}</div>
+            </div>
+            {alert.pid != null && (
+              <button
+                className="button button--ghost"
+                onClick={() => {
+                  selectProcess(alert.pid);
+                  setTab("processes");
+                }}
+              >
+                View process
+              </button>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function DomainGauge({ domain }: { domain: DomainHealth }) {
+  return (
+    <div className="health__domain" title={domain.contributors.join(", ") || undefined}>
+      <span className="health__domain-name">{domain.domain}</span>
+      <span className="health__domain-score">{domain.score}</span>
     </div>
   );
 }

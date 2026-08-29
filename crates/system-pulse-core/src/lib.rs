@@ -11,11 +11,14 @@
 
 #![warn(unsafe_code)]
 
+pub mod alerts;
+pub mod analysis;
 pub mod calc;
 pub mod collector;
 pub mod format;
 pub mod gpu;
 pub mod health;
+pub mod history;
 pub mod model;
 pub mod platform;
 pub mod process;

@@ -8,6 +8,7 @@ import GpuPanel from "./components/GpuPanel";
 import NetworkPanel from "./components/NetworkPanel";
 import HardwarePanel from "./components/HardwarePanel";
 import HealthPanel from "./components/HealthPanel";
+import TrendsPanel from "./components/TrendsPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusBar from "./components/StatusBar";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -130,6 +131,11 @@ export default function App() {
         {tab === "health" && (
           <ErrorBoundary label="Health">
             <HealthPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "trends" && (
+          <ErrorBoundary label="Trends">
+            <TrendsPanel />
           </ErrorBoundary>
         )}
         {tab === "settings" && (

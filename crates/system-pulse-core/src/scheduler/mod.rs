@@ -9,6 +9,7 @@ mod shared;
 mod wake;
 mod worker;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -44,6 +45,13 @@ pub struct Scheduler {
     warm_wake: Arc<WakeSignal>,
     frame_mailbox: Mailbox<TelemetrySnapshot>,
     handles: std::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// Set by `spawn` if a history path was given; used by `query_history`
+    /// to open its own on-demand read connection to the same file (see
+    /// `crate::history`'s module doc for the WAL-mode reasoning). A plain
+    /// `Option<PathBuf>` regardless of the `history` feature — with the
+    /// feature off, `HistoryStore::query` is `stub`'s always-empty no-op,
+    /// so `None` here still yields the right (empty) answer.
+    history_db_path: std::sync::Mutex<Option<PathBuf>>,
 }
 
 impl Scheduler {
@@ -60,6 +68,7 @@ impl Scheduler {
             warm_wake: Arc::new(WakeSignal::new()),
             frame_mailbox: Mailbox::new(),
             handles: std::sync::Mutex::new(Vec::new()),
+            history_db_path: std::sync::Mutex::new(None),
         }
     }
 
@@ -90,13 +99,41 @@ impl Scheduler {
     /// the caller (the Tauri shell) constructs them and hands them in here.
     /// Each collector is `probe()`d before its thread starts running its
     /// schedule.
-    pub fn spawn(&self, extra_warm_collectors: Vec<Box<dyn Collector>>) {
+    ///
+    /// `history_db_path` opts the hot loop into recording a
+    /// `HistorySample` per frame; `None` (used by the headless probe and
+    /// every scheduler test) runs with no history writer at all rather
+    /// than one pointed at a throwaway path — there is nothing to query
+    /// afterward either way, so skipping it is simpler than standing up
+    /// and tearing down a real database file. With the `history` Cargo
+    /// feature off, `HistoryWriter` is `crate::history::stub`'s inert
+    /// no-op, so this parameter is harmlessly ignored rather than needing
+    /// its own `#[cfg]` here.
+    pub fn spawn(
+        &self,
+        extra_warm_collectors: Vec<Box<dyn Collector>>,
+        history_db_path: Option<PathBuf>,
+    ) {
         let cpu = CpuCollector::new(Arc::clone(&self.shared_sys));
         let memory = MemoryCollector::new(Arc::clone(&self.shared_sys));
         let process = ProcessCollector::new(Arc::clone(&self.shared_sys));
         let disk = DiskCollector::new();
         let network = NetworkCollector::new();
         let gpu = GpuCollector::new();
+
+        let history_writer = history_db_path.and_then(|path| {
+            *self.history_db_path.lock().unwrap() = Some(path.clone());
+            match crate::history::HistoryWriter::spawn(path) {
+                Ok(w) => Some(Arc::new(w)),
+                Err(e) => {
+                    // History is diagnostic evidence, not load-bearing —
+                    // telemetry must keep working live even if the DB
+                    // couldn't be opened (e.g. an unwritable data dir).
+                    eprintln!("history: failed to start writer, continuing without it: {e}");
+                    None
+                }
+            }
+        });
 
         let hot = HotLoop::new(
             cpu,
@@ -108,6 +145,7 @@ impl Scheduler {
             Arc::clone(&self.hot_resume),
             Arc::clone(&self.interval_ms),
             Arc::clone(&self.hot_wake),
+            history_writer,
         );
 
         // Two workers, statically split: worker A gets the two collectors
@@ -187,6 +225,24 @@ impl Scheduler {
         self.sections.lock().hardware.clone()
     }
 
+    /// Queries recorded history. Opens its own short-lived read connection
+    /// to the writer's database file rather than sharing the writer's
+    /// connection (WAL mode makes this safe — see `crate::history`'s
+    /// module doc) — simpler than keeping a long-lived reader alive for
+    /// what is, from the IPC side, an infrequent on-demand call. `Ok(&[])`
+    /// (not an error) if no history path was ever given to `spawn`.
+    pub fn query_history(
+        &self,
+        range: crate::history::TimeRange,
+        series: crate::history::SeriesId,
+    ) -> Result<Vec<crate::history::HistoryPoint>, crate::history::HistoryError> {
+        let path = self.history_db_path.lock().unwrap().clone();
+        let Some(path) = path else {
+            return Ok(Vec::new());
+        };
+        crate::history::HistoryStore::open(&path)?.query(range, series)
+    }
+
     /// A throwaway `System`, refreshed once, for the one-shot `SystemInfo`
     /// IPC call — deliberately independent of the live collectors' shared
     /// state so this never contends with the sampling threads.
@@ -227,7 +283,7 @@ mod tests {
     #[test]
     fn stop_joins_every_thread_within_a_bound() {
         let scheduler = Scheduler::new();
-        scheduler.spawn(vec![]);
+        scheduler.spawn(vec![], None);
         scheduler.set_visible(true);
         std::thread::sleep(Duration::from_millis(50));
 
@@ -246,7 +302,7 @@ mod tests {
     #[test]
     fn hidden_scheduler_produces_no_frames() {
         let scheduler = Scheduler::new();
-        scheduler.spawn(vec![]);
+        scheduler.spawn(vec![], None);
         // Never call set_visible(true).
         let mailbox = scheduler.frame_mailbox();
         let frame = mailbox.take_timeout(Duration::from_millis(150));
@@ -261,7 +317,7 @@ mod tests {
         // to regardless of what's requested — use it directly so this test
         // observes the real cadence rather than a clamped one.
         scheduler.set_interval_ms(crate::settings::MIN_REFRESH_INTERVAL_MS);
-        scheduler.spawn(vec![]);
+        scheduler.spawn(vec![], None);
         scheduler.set_visible(true);
 
         let mailbox = scheduler.frame_mailbox();

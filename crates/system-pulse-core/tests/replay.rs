@@ -17,11 +17,11 @@ fn fixture_path() -> PathBuf {
         .join("..")
         .join("fixtures")
         .join("replay")
-        .join("phase1b-baseline.ndjson")
+        .join("phase2-baseline.ndjson")
 }
 
 fn load_frames() -> Vec<TelemetrySnapshot> {
-    let content = fs::read_to_string(fixture_path()).expect("phase1b-baseline.ndjson must exist");
+    let content = fs::read_to_string(fixture_path()).expect("phase2-baseline.ndjson must exist");
     content
         .lines()
         .filter(|l| !l.trim().is_empty())

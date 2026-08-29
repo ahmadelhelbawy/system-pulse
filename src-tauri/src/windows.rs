@@ -16,7 +16,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let settings = crate::settings::load(app);
 
     let telemetry = TelemetryService::new(Arc::new(TauriSink { app: app.clone() }));
-    telemetry.spawn(system_pulse_win::all_collectors());
+    // `app_data_dir()` (not `app_config_dir()`, used for settings.json) —
+    // this is a continuously-growing data file, not user configuration.
+    // `None` (no history) rather than failing setup if the data dir can't
+    // be resolved: telemetry must keep working live either way, matching
+    // `Scheduler::spawn`'s own "history is diagnostic evidence, not
+    // load-bearing" stance on a failed-to-open database.
+    let history_db_path = app
+        .path()
+        .app_data_dir()
+        .map(|dir| dir.join("history.sqlite3"))
+        .ok();
+    telemetry.spawn(system_pulse_win::all_collectors(), history_db_path);
 
     app.manage(AppState {
         settings: Arc::new(std::sync::Mutex::new(settings.clone())),

@@ -113,7 +113,12 @@ fn main() {
     });
     let service = TelemetryService::new(sink);
     service.set_visible(!idle);
-    service.spawn(vec![]); // no Windows-only collectors on this host
+    // No Windows-only collectors on this host. A real history DB path (not
+    // `None`) so a probe run is also a way to manually inspect
+    // `crate::history` end-to-end, e.g. via `sqlite3
+    // /tmp/system-pulse-probe-history.sqlite3 'select * from samples_raw'`.
+    let history_path = std::env::temp_dir().join("system-pulse-probe-history.sqlite3");
+    service.spawn(vec![], Some(history_path));
 
     std::thread::sleep(Duration::from_secs(seconds));
     service.stop();

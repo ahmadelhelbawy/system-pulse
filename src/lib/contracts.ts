@@ -72,6 +72,27 @@ totalWrite: number, };
 export type DiskSnapshot = { name: string, mountPoint: string, fileSystem: string, total: number, available: number, usedPercent: number, readRate: number, writeRate: number, isRemovable: boolean, };
 
 /**
+ * One domain's contribution to the overall score — "why did this number
+ * move," not just the number itself.
+ */
+export type DomainHealth = { 
+/**
+ * cpu | memory | disk | gpu | process — matches `HealthAlert::category`.
+ */
+domain: string, 
+/**
+ * 0..=100. 100 minus a fixed penalty per active alert in this domain
+ * (see `crate::alerts`) — deterministic and explainable by
+ * construction, never a learned or opaque model.
+ */
+score: number, 
+/**
+ * Human-readable reasons this domain's score is below 100, most
+ * severe first — the active alerts' titles, not a separate text.
+ */
+contributors: Array<string>, };
+
+/**
  * Why a collector's read failed this time (transient, as opposed to
  * [`UnsupportedReason`], which is permanent for this machine).
  */
@@ -79,7 +100,15 @@ export type FailureCode = "timeout" | "accessDenied" | "apiError" | "parseError"
 
 export type GpuSnapshot = { name: string, utilizationPercent: number | null, vramUsed: number | null, vramTotal: number | null, temperatureC: number | null, powerW: number | null, driverVersion: string | null, };
 
-export type HealthAlert = { severity: Severity, 
+export type HealthAlert = { 
+/**
+ * Stable identity across ticks (`category:title[:pid]`) — what
+ * `crate::alerts::AlertEngine` debounces on and what the frontend
+ * should key list rendering by, instead of array index (1.0's alerts
+ * were keyed by index, so a list reorder or a cleared alert above it
+ * silently reassigned every row's identity).
+ */
+id: string, severity: Severity, 
 /**
  * Stable machine-readable category: cpu | memory | disk | gpu | process.
  */
@@ -88,6 +117,24 @@ category: string, title: string, detail: string,
  * Associated process id when the alert concerns a single process.
  */
 pid: number | null, };
+
+/**
+ * Replaces 1.0's bare `Vec<HealthAlert>`: a single number for the status
+ * bar/topology hero, per-domain breakdown for "why," and the stabilized
+ * alert list (see `crate::alerts::AlertEngine`) for the Health panel.
+ */
+export type HealthScore = { 
+/**
+ * 0..=100. The mean of `domains`' scores — deliberately not the
+ * minimum: one saturated domain should pull the number down, not
+ * zero it out, since the other domains are still healthy evidence.
+ */
+overall: number, domains: Array<DomainHealth>, alerts: Array<HealthAlert>, };
+
+/**
+ * One point of a queried series.
+ */
+export type HistoryPoint = { tsMs: UnixMillis, value: number, };
 
 export type MemorySnapshot = { total: number, used: number, available: number, usedPercent: number, swapTotal: number, swapUsed: number, };
 
@@ -141,6 +188,13 @@ startedAt: UnixMillis | null, };
  * 12s ago" instead of blanking out on a single missed tick.
  */
 export type Sampled<T> = { value: T | null, availability: Availability, source: Source, asOf: UnixMillis, };
+
+/**
+ * Which recorded metric a history query wants. Closed enum for the same
+ * reason `HistorySample`'s fields are fixed columns rather than a keyed
+ * map — see that type's doc.
+ */
+export type SeriesId = "cpuPercent" | "memUsedPercent" | "gpuPercent" | "diskReadRate" | "diskWriteRate" | "netDownloadRate" | "netUploadRate";
 
 export type Settings = { 
 /**
@@ -199,10 +253,17 @@ timestampMs: UnixMillis, uptimeSecs: number, cpu: Sampled<CpuSnapshot>, memory: 
 windowsInternal: Sampled<WindowsInternalState>, 
 /**
  * Derived/computed, not collected from hardware — provenance doesn't
- * apply the same way, so this stays a plain list. Reshaped into a
- * scored `HealthScore` in Phase 2; untouched here.
+ * apply the same way. A scored, hysteresis-stabilized summary
+ * (Phase 2) rather than the raw per-tick alert list `health::analyze`
+ * produces — see `crate::alerts::AlertEngine`.
  */
-health: Array<HealthAlert>, };
+health: HealthScore, };
+
+/**
+ * An inclusive wall-clock query range. `UnixMillis` on both ends — see
+ * `crate::model::time` for why history never mixes this with `Instant`.
+ */
+export type TimeRange = { fromMs: UnixMillis, toMs: UnixMillis, };
 
 export type TransportProtocol = "tcp" | "udp";
 

@@ -85,6 +85,14 @@ impl From<String> for AppError {
     }
 }
 
+impl From<system_pulse_core::history::HistoryError> for AppError {
+    fn from(e: system_pulse_core::history::HistoryError) -> Self {
+        AppError::Message {
+            message: e.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "network", label: "Network" },
   { id: "hardware", label: "Hardware" },
   { id: "health", label: "Health" },
+  { id: "trends", label: "Trends" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -17,7 +18,7 @@ export default function Toolbar() {
   const setTab = useStore((s) => s.setTab);
   const cpu = useStore((s) => s.snapshot?.cpu.value?.totalPercent ?? 0);
   const mem = useStore((s) => s.snapshot?.memory.value?.usedPercent ?? 0);
-  const healthCount = useStore((s) => s.snapshot?.health.length ?? 0);
+  const healthCount = useStore((s) => s.snapshot?.health.alerts.length ?? 0);
   const compact = useStore((s) => s.settings.compactMode);
 
   const toggleCompact = () => {

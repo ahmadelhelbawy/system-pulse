@@ -37,9 +37,10 @@ pub struct TelemetrySnapshot {
     /// `system-pulse-win::perf_info`'s module doc.
     pub windows_internal: Sampled<WindowsInternalState>,
     /// Derived/computed, not collected from hardware — provenance doesn't
-    /// apply the same way, so this stays a plain list. Reshaped into a
-    /// scored `HealthScore` in Phase 2; untouched here.
-    pub health: Vec<HealthAlert>,
+    /// apply the same way. A scored, hysteresis-stabilized summary
+    /// (Phase 2) rather than the raw per-tick alert list `health::analyze`
+    /// produces — see `crate::alerts::AlertEngine`.
+    pub health: HealthScore,
 }
 
 /// Raw, cumulative CPU tick counters used to derive utilization.
@@ -165,6 +166,12 @@ pub enum Severity {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct HealthAlert {
+    /// Stable identity across ticks (`category:title[:pid]`) — what
+    /// `crate::alerts::AlertEngine` debounces on and what the frontend
+    /// should key list rendering by, instead of array index (1.0's alerts
+    /// were keyed by index, so a list reorder or a cleared alert above it
+    /// silently reassigned every row's identity).
+    pub id: String,
     pub severity: Severity,
     /// Stable machine-readable category: cpu | memory | disk | gpu | process.
     pub category: String,
@@ -172,6 +179,38 @@ pub struct HealthAlert {
     pub detail: String,
     /// Associated process id when the alert concerns a single process.
     pub pid: Option<u32>,
+}
+
+/// One domain's contribution to the overall score — "why did this number
+/// move," not just the number itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DomainHealth {
+    /// cpu | memory | disk | gpu | process — matches `HealthAlert::category`.
+    pub domain: String,
+    /// 0..=100. 100 minus a fixed penalty per active alert in this domain
+    /// (see `crate::alerts`) — deterministic and explainable by
+    /// construction, never a learned or opaque model.
+    pub score: u8,
+    /// Human-readable reasons this domain's score is below 100, most
+    /// severe first — the active alerts' titles, not a separate text.
+    pub contributors: Vec<String>,
+}
+
+/// Replaces 1.0's bare `Vec<HealthAlert>`: a single number for the status
+/// bar/topology hero, per-domain breakdown for "why," and the stabilized
+/// alert list (see `crate::alerts::AlertEngine`) for the Health panel.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HealthScore {
+    /// 0..=100. The mean of `domains`' scores — deliberately not the
+    /// minimum: one saturated domain should pull the number down, not
+    /// zero it out, since the other domains are still healthy evidence.
+    pub overall: u8,
+    pub domains: Vec<DomainHealth>,
+    pub alerts: Vec<HealthAlert>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
@@ -333,13 +372,22 @@ mod tests {
                 Source::PerfInfo,
                 UnixMillis(1),
             ),
-            health: vec![HealthAlert {
-                severity: Severity::Warning,
-                category: "memory".to_string(),
-                title: "High memory".to_string(),
-                detail: "detail".to_string(),
-                pid: None,
-            }],
+            health: HealthScore {
+                overall: 90,
+                domains: vec![DomainHealth {
+                    domain: "memory".to_string(),
+                    score: 90,
+                    contributors: vec!["High memory".to_string()],
+                }],
+                alerts: vec![HealthAlert {
+                    id: "memory:High memory".to_string(),
+                    severity: Severity::Warning,
+                    category: "memory".to_string(),
+                    title: "High memory".to_string(),
+                    detail: "detail".to_string(),
+                    pid: None,
+                }],
+            },
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -348,6 +396,7 @@ mod tests {
         assert_eq!(back.cpu, snapshot.cpu);
         assert_eq!(back.gpu, snapshot.gpu);
         assert_eq!(back.processes, snapshot.processes);
+        assert_eq!(back.health, snapshot.health);
     }
 
     #[test]

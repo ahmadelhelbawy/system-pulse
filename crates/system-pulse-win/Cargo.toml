@@ -10,7 +10,16 @@ name = "system_pulse_win"
 path = "src/lib.rs"
 
 [dependencies]
-system-pulse-core = { path = "../system-pulse-core" }
+# `default-features = false`: this crate never touches `system-pulse-core`'s
+# `history` feature (bundled rusqlite), and disabling it here is what lets
+# `cargo check --target x86_64-pc-windows-msvc -p system-pulse-win` verify
+# this crate in isolation in this repo's sandbox (which has no MSVC-ABI C
+# toolchain for rusqlite's bundled build script — see
+# `system-pulse-core::history`'s module doc). Harmless for the real app
+# binary: Cargo unifies features across a shared dependency, so `src-tauri`
+# asking for `history` still turns it on for the final build regardless of
+# what this crate declares.
+system-pulse-core = { path = "../system-pulse-core", default-features = false }
 parking_lot = "0.12"
 
 [target.'cfg(windows)'.dependencies]

@@ -8,12 +8,15 @@ import type {
   AppError,
   CollectorCapability,
   ConnectionSnapshot,
+  HistoryPoint,
   ProcessIdentity,
   Sampled,
   Settings,
+  SeriesId,
   SmbiosInfo,
   SystemInfo,
   TelemetrySnapshot,
+  TimeRange,
 } from "./contracts";
 
 export const api = {
@@ -38,6 +41,8 @@ export const api = {
     invoke<Sampled<ConnectionSnapshot[]> | null>("get_connections"),
   getHardwareInfo: () =>
     invoke<Sampled<SmbiosInfo> | null>("get_hardware_info"),
+  queryHistory: (range: TimeRange, series: SeriesId) =>
+    invoke<HistoryPoint[]>("query_history", { range, series }),
   quit: () => invoke<void>("quit"),
 };
 
