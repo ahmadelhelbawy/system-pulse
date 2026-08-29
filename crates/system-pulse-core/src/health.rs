@@ -334,6 +334,7 @@ mod tests {
             gpu_mem: None,
             exe: None,
             user: None,
+            started_at: None,
         }];
         let input = HealthInput {
             cpu_percent: 0.0,

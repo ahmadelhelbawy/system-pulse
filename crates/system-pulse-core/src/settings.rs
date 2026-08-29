@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ts_rs::TS;
 
 /// Default global hotkey: Ctrl+Alt+0.
 pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+0";
@@ -14,8 +15,9 @@ pub const MIN_REFRESH_INTERVAL_MS: u64 = 250;
 pub const MAX_REFRESH_INTERVAL_MS: u64 = 10_000;
 pub const DEFAULT_REFRESH_INTERVAL_MS: u64 = 1_000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(export)]
 pub struct Settings {
     /// Canonical hotkey string, e.g. `Ctrl+Alt+0`.
     pub hotkey: String,

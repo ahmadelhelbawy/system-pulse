@@ -14,9 +14,9 @@ mod windows;
 
 use std::sync::{Arc, Mutex};
 
-use system_pulse_core::sampling::{TelemetryService, TelemetrySink};
+use system_pulse_core::sampling::{Backpressure, TelemetryService, TelemetrySink};
 use system_pulse_core::{Settings, TelemetrySnapshot};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 
 /// Shared application state.
 pub struct AppState {
@@ -30,9 +30,12 @@ struct TauriSink {
 }
 
 impl TelemetrySink for TauriSink {
-    fn emit(&self, snapshot: TelemetrySnapshot) {
-        // Best-effort; the frontend may be hidden/closed mid-frame.
+    fn try_emit(&self, snapshot: TelemetrySnapshot) -> Result<(), Backpressure> {
+        // Best-effort; the frontend may be hidden/closed mid-frame. Emitting
+        // is cheap enough not to need its own backpressure signal here — the
+        // mailbox this is drained from already coalesces upstream.
         let _ = self.app.emit("telemetry", &snapshot);
+        Ok(())
     }
 }
 
@@ -56,12 +59,21 @@ pub fn run() {
             ipc::kill_process,
             ipc::is_elevated,
             ipc::get_system_info,
+            ipc::get_capabilities,
             ipc::quit,
         ])
         .build(tauri::generate_context!())
         .expect("error while building System Pulse")
-        .run(|_app_handle, _event| {
-            // Run loop is intentionally minimal; all lifecycle logic lives in
-            // `windows` and the telemetry engine.
+        .run(|app_handle, event| {
+            // 1.0 had no shutdown path at all: the telemetry thread's
+            // `JoinHandle` was discarded and its loop had no stop flag, so
+            // nothing here could ever have joined it anyway. Now that it
+            // does, stop it cleanly on exit rather than leaving threads
+            // running past the point the app handle is torn down.
+            if let RunEvent::Exit = event {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    state.telemetry.stop();
+                }
+            }
         });
 }

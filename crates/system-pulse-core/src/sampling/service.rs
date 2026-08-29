@@ -1,105 +1,99 @@
-//! The telemetry loop: schedules tiered sampling and emits frames.
+//! Public facade over [`crate::scheduler::Scheduler`]: the same
+//! `TelemetryService`/`TelemetrySink` shape callers (the Tauri shell, the
+//! headless probe) already used, now backed by the hot/warm thread split
+//! instead of one thread behind one mutex.
 //!
-//! * Emits one frame per cheap interval (default 1 s).
-//! * Moderate metrics every 2nd tick; expensive metrics every 5th tick.
-//! * When not visible it sleeps without sampling, keeping idle CPU ~0.
+//! `TelemetrySink::try_emit` is fallible and non-blocking (previously
+//! `emit`, infallible, called directly on the sampling thread) — a slow or
+//! unavailable sink can no longer stall sampling: this runs on a dedicated
+//! emit thread that drains the hot-frame mailbox, so a missed emit just
+//! means the next (fresher) frame will coalesce over it, never a queue.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::gpu::GpuProvider;
-use crate::settings::{
-    DEFAULT_REFRESH_INTERVAL_MS, MAX_REFRESH_INTERVAL_MS, MIN_REFRESH_INTERVAL_MS,
-};
+use crate::scheduler::Scheduler;
 use crate::types::{SystemInfo, TelemetrySnapshot};
 
-use super::system::SystemSampler;
+/// A sink cannot keep up with the current frame rate; the frame is dropped
+/// (the next one will coalesce over it in the mailbox regardless).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Backpressure;
 
-/// Receives telemetry frames. The Tauri app implements this to `emit` an IPC
-/// event; the probe implements it to print.
+/// Receives telemetry frames. The Tauri app implements this to `emit` an
+/// IPC event; the probe implements it to print.
 pub trait TelemetrySink: Send + Sync {
-    fn emit(&self, snapshot: TelemetrySnapshot);
+    fn try_emit(&self, snapshot: TelemetrySnapshot) -> Result<(), Backpressure>;
 }
 
 pub struct TelemetryService {
-    inner: Arc<ServiceInner>,
-}
-
-struct ServiceInner {
-    sampler: Mutex<SystemSampler>,
+    scheduler: Arc<Scheduler>,
+    emit_shutdown: Arc<AtomicBool>,
+    emit_handle: Mutex<Option<JoinHandle<()>>>,
     sink: Arc<dyn TelemetrySink + Send + Sync>,
-    visible: AtomicBool,
-    interval_ms: AtomicU64,
 }
 
 impl TelemetryService {
-    pub fn new(sink: Arc<dyn TelemetrySink + Send + Sync>, gpu: Box<dyn GpuProvider>) -> Self {
+    pub fn new(sink: Arc<dyn TelemetrySink + Send + Sync>) -> Self {
         Self {
-            inner: Arc::new(ServiceInner {
-                sampler: Mutex::new(SystemSampler::new(gpu)),
-                sink,
-                visible: AtomicBool::new(false),
-                interval_ms: AtomicU64::new(DEFAULT_REFRESH_INTERVAL_MS),
-            }),
+            scheduler: Arc::new(Scheduler::new()),
+            emit_shutdown: Arc::new(AtomicBool::new(false)),
+            emit_handle: Mutex::new(None),
+            sink,
         }
     }
 
     /// Pause/resume sampling (drives near-zero CPU while hidden).
     pub fn set_visible(&self, visible: bool) {
-        self.inner.visible.store(visible, Ordering::Relaxed);
+        self.scheduler.set_visible(visible);
     }
 
     pub fn set_interval_ms(&self, ms: u64) {
-        let clamped = ms.clamp(MIN_REFRESH_INTERVAL_MS, MAX_REFRESH_INTERVAL_MS);
-        self.inner.interval_ms.store(clamped, Ordering::Relaxed);
+        self.scheduler.set_interval_ms(ms);
     }
 
-    /// Static hardware/system info (primes the sampler if necessary).
+    /// Static hardware/system info. Independent of the live collectors —
+    /// never contends with the sampling threads.
     pub fn system_info(&self) -> SystemInfo {
-        let mut sampler = self.inner.sampler.lock().unwrap();
-        sampler.sample_cheap(); // primes on first use
-        sampler.system_info().clone()
+        Scheduler::one_shot_system_info()
     }
 
-    /// Spawn the background telemetry thread.
-    pub fn spawn(&self) -> JoinHandle<()> {
-        let inner = Arc::clone(&self.inner);
-        std::thread::Builder::new()
-            .name("system-pulse-telemetry".to_string())
-            .spawn(move || run(inner))
-            .expect("failed to spawn telemetry thread")
+    /// Spawns the hot thread, the warm-tier worker pool, and a dedicated
+    /// emit thread that drains frames to the sink.
+    pub fn spawn(&self) {
+        self.scheduler.spawn();
+
+        let mailbox = self.scheduler.frame_mailbox();
+        let sink = Arc::clone(&self.sink);
+        let shutdown = Arc::clone(&self.emit_shutdown);
+        let handle = std::thread::Builder::new()
+            .name("system-pulse-emit".to_string())
+            .spawn(move || {
+                while !shutdown.load(Ordering::Relaxed) {
+                    if let Some(frame) = mailbox.take_timeout(Duration::from_millis(250)) {
+                        // Best-effort: a slow/unavailable sink drops this
+                        // frame; the next one coalesces over it regardless.
+                        let _ = sink.try_emit(frame);
+                    }
+                }
+            })
+            .expect("failed to spawn telemetry emit thread");
+        *self.emit_handle.lock().unwrap() = Some(handle);
     }
-}
 
-fn run(inner: Arc<ServiceInner>) {
-    let mut tick: u64 = 0;
-    loop {
-        if !inner.visible.load(Ordering::Relaxed) {
-            std::thread::sleep(Duration::from_millis(250));
-            continue;
+    /// Stops every telemetry thread (hot, both warm workers, emit) and
+    /// joins them all. 1.0 had no shutdown path at all — this is what makes
+    /// pause/interval changes take effect immediately instead of after up
+    /// to `interval_ms`, and what a future resource-holding collector
+    /// (event log, COM) will need to release cleanly.
+    pub fn stop(&self) {
+        self.emit_shutdown.store(true, Ordering::Relaxed);
+        self.scheduler.frame_mailbox().notify();
+        if let Some(h) = self.emit_handle.lock().unwrap().take() {
+            let _ = h.join();
         }
-
-        {
-            let mut sampler = inner.sampler.lock().unwrap();
-            if tick.is_multiple_of(2) {
-                sampler.sample_moderate();
-            }
-            if tick.is_multiple_of(5) {
-                sampler.sample_expensive();
-            }
-            sampler.sample_cheap();
-            let snapshot = sampler.snapshot();
-            drop(sampler);
-            inner.sink.emit(snapshot);
-        }
-
-        tick = tick.wrapping_add(1);
-        let interval = inner
-            .interval_ms
-            .load(Ordering::Relaxed)
-            .clamp(MIN_REFRESH_INTERVAL_MS, MAX_REFRESH_INTERVAL_MS);
-        std::thread::sleep(Duration::from_millis(interval));
+        self.scheduler.stop();
     }
 }

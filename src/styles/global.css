@@ -25,6 +25,61 @@
 
   --radius: 8px;
   --radius-sm: 5px;
+
+  /* --- System Pulse 2.0 design-token contract ---------------------------
+   * Established in Phase 1A per the master plan so later phases (panels,
+   * the topology map, Phase 6's visual pass) build on a fixed scale instead
+   * of inventing new magic numbers. Existing component CSS below is NOT
+   * retrofitted onto these yet — that migration is Phase 6's job; this is
+   * the contract new/changed code in this phase and beyond must use.
+   */
+
+  /* Spacing scale (px) */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+
+  /* Type scale (px) */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  /* Elevation */
+  --elev-0: none;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --elev-modal: 0 12px 40px rgba(0, 0, 0, 0.5);
+
+  /* Motion */
+  --motion-fast: 0.15s ease;
+  --motion-base: 0.3s ease;
+  --motion-slow: 1.2s ease;
+
+  /* Focus ring: a visible, theme-consistent outline for every interactive
+   * element. Tabs/buttons/icon-buttons had no focus style at all before
+   * this — falling back to whatever faint default the UA draws on a dark
+   * surface. */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* Availability-state rendering contract (see model::Availability on the
+   * Rust side): every component that renders a Sampled<T> value uses these
+   * so "unavailable" vs. "needs elevation" vs. "stale" read consistently
+   * everywhere instead of each panel inventing its own dash/label/color. */
+  --availability-unavailable-color: var(--text-faint);
+  --availability-needs-elevation-color: var(--warning);
+  --availability-failed-color: var(--danger);
+  --availability-stale-color: var(--text-muted);
 }
 
 * {
@@ -46,7 +101,24 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* Suppress accidental text selection on UI chrome only — a diagnostics tool
+ * must let the user select and copy a PID, a path, a hostname, or an error
+ * message, which a blanket `body { user-select: none }` used to block
+ * entirely. */
+.tab,
+.button,
+.icon-button,
+.toggle,
+.statusbar__dot,
+kbd {
   user-select: none;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .mono {

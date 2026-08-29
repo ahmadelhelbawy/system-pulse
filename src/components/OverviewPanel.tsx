@@ -1,10 +1,12 @@
+import type { DiskSnapshot, NetworkSnapshot } from "../lib/contracts";
 import {
   formatBytes,
   formatFrequencyMhz,
   formatPercent,
   formatRate,
 } from "../lib/format";
-import { useStore } from "../state/store";
+import { availabilityLabel } from "../lib/availability";
+import { seriesValues, useStore } from "../state/store";
 import MetricCard from "./common/MetricCard";
 import ProgressBar from "./common/ProgressBar";
 import Sparkline from "./common/Sparkline";
@@ -13,83 +15,105 @@ import EmptyState from "./common/EmptyState";
 export default function OverviewPanel() {
   const snapshot = useStore((s) => s.snapshot);
   const info = useStore((s) => s.systemInfo);
-  const cpuHistory = useStore((s) => s.cpuHistory);
-  const memHistory = useStore((s) => s.memHistory);
+  const series = useStore((s) => s.series);
 
   if (!snapshot) {
     return <EmptyState title="Waiting for telemetry…" detail="Sampling starts momentarily." />;
   }
 
   const { cpu, memory, diskIo, disks, networks, uptimeSecs } = snapshot;
+  const cpuHistory = seriesValues(series, "cpu");
+  const memHistory = seriesValues(series, "memory");
 
   return (
     <div className="overview">
       <div className="grid">
         <MetricCard
           title="CPU"
-          value={formatPercent(cpu.totalPercent)}
+          value={cpu.value ? formatPercent(cpu.value.totalPercent) : availabilityLabel(cpu.availability)}
           subtitle={
-            cpu.frequencyMhz != null
-              ? `${cpu.coreCount} cores · ${formatFrequencyMhz(cpu.frequencyMhz)}`
-              : `${cpu.coreCount} cores`
+            cpu.value == null
+              ? undefined
+              : cpu.value.frequencyMhz != null
+                ? `${cpu.value.coreCount} cores · ${formatFrequencyMhz(cpu.value.frequencyMhz)}`
+                : `${cpu.value.coreCount} cores`
           }
         >
           <Sparkline data={cpuHistory} max={100} height={40} />
-          <div className="core-grid" aria-label="Per-core utilization">
-            {cpu.perCore.map((p, i) => (
-              <div className="core" key={i} title={`Core ${i}: ${formatPercent(p)}`}>
-                <div className="core__bar">
-                  <div
-                    className="core__fill"
-                    style={{
-                      height: `${Math.min(100, Math.max(0, p))}%`,
-                      background: p > 85 ? "var(--danger)" : "var(--accent)",
-                    }}
-                  />
+          {cpu.value && (
+            <div className="core-grid" aria-label="Per-core utilization">
+              {cpu.value.perCore.map((p, i) => (
+                <div className="core" key={i} title={`Core ${i}: ${formatPercent(p)}`}>
+                  <div className="core__bar">
+                    <div
+                      className="core__fill"
+                      style={{
+                        height: `${Math.min(100, Math.max(0, p))}%`,
+                        background: p > 85 ? "var(--danger)" : "var(--accent)",
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </MetricCard>
 
         <MetricCard
           title="Memory"
-          value={formatPercent(memory.usedPercent)}
-          subtitle={`${formatBytes(memory.used)} / ${formatBytes(memory.total)}`}
+          value={
+            memory.value
+              ? formatPercent(memory.value.usedPercent)
+              : availabilityLabel(memory.availability)
+          }
+          subtitle={
+            memory.value
+              ? `${formatBytes(memory.value.used)} / ${formatBytes(memory.value.total)}`
+              : undefined
+          }
         >
           <Sparkline data={memHistory} max={100} height={40} color="var(--violet)" />
-          <ProgressBar value={memory.usedPercent} color="var(--violet)" height={8} />
-          <div className="kv">
-            <span>Available</span>
-            <span>{formatBytes(memory.available)}</span>
-            <span>Swap</span>
-            <span>
-              {memory.swapTotal > 0
-                ? `${formatBytes(memory.swapUsed)} / ${formatBytes(memory.swapTotal)}`
-                : "—"}
-            </span>
-          </div>
+          {memory.value && (
+            <>
+              <ProgressBar value={memory.value.usedPercent} color="var(--violet)" height={8} />
+              <div className="kv">
+                <span>Available</span>
+                <span>{formatBytes(memory.value.available)}</span>
+                <span>Swap</span>
+                <span>
+                  {memory.value.swapTotal > 0
+                    ? `${formatBytes(memory.value.swapUsed)} / ${formatBytes(memory.value.swapTotal)}`
+                    : "—"}
+                </span>
+              </div>
+            </>
+          )}
         </MetricCard>
 
         <MetricCard
           title="Disk I/O"
-          value={`${formatRate(diskIo.readRate)} ↓`}
-          subtitle={`${formatRate(diskIo.writeRate)} ↑`}
+          value={diskIo.value ? `${formatRate(diskIo.value.readRate)} ↓` : availabilityLabel(diskIo.availability)}
+          subtitle={diskIo.value ? `${formatRate(diskIo.value.writeRate)} ↑` : undefined}
         >
           <div className="kv">
-            {disks.map((d) => (
+            {(disks.value ?? []).map((d: DiskSnapshot) => (
               <DiskRow key={d.name} name={d.name} usedPercent={d.usedPercent} />
             ))}
+            {disks.value == null && <EmptyState title={availabilityLabel(disks.availability)} />}
           </div>
         </MetricCard>
 
         <MetricCard
           title="Network"
-          value={`${formatRate(totalDown(networks))} ↓`}
-          subtitle={`${formatRate(totalUp(networks))} ↑`}
+          value={
+            networks.value
+              ? `${formatRate(totalDown(networks.value))} ↓`
+              : availabilityLabel(networks.availability)
+          }
+          subtitle={networks.value ? `${formatRate(totalUp(networks.value))} ↑` : undefined}
         >
           <div className="kv">
-            {networks.slice(0, 4).map((n) => (
+            {(networks.value ?? []).slice(0, 4).map((n: NetworkSnapshot) => (
               <div className="kv__row" key={n.name}>
                 <span className="kv__label">{n.name}</span>
                 <span className="kv__value">

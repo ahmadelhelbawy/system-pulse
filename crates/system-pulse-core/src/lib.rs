@@ -12,13 +12,17 @@
 #![warn(unsafe_code)]
 
 pub mod calc;
+pub mod collector;
 pub mod format;
 pub mod gpu;
 pub mod health;
+pub mod model;
 pub mod platform;
 pub mod process;
 pub mod sampling;
+pub mod scheduler;
 pub mod settings;
+pub mod transport;
 pub mod types;
 
 pub use settings::{Hotkey, Settings};

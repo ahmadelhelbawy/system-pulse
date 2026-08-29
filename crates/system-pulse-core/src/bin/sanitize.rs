@@ -53,6 +53,17 @@ const PROCESS_ALLOWLIST: &[&str] = &[
     "msedgewebview2.exe",
 ];
 
+/// Reaches into a Phase 1A `Sampled<Vec<T>>` field — `{"value": [...] |
+/// null, "availability": ..., ...}` — and returns the array, if present.
+/// Every array-shaped section field (`processes`, `networks`, `disks`,
+/// `gpu`) is wrapped this way now; a field that's a bare array (the old,
+/// pre-Phase-1A wire shape) is deliberately NOT matched here, so a
+/// regression back to the flat shape fails loudly (nothing gets redacted)
+/// rather than silently working by accident.
+fn sampled_array_mut<'a>(value: &'a mut Value, field: &str) -> Option<&'a mut Vec<Value>> {
+    value.get_mut(field)?.get_mut("value")?.as_array_mut()
+}
+
 struct Sanitizer {
     process_names: HashMap<String, String>,
     network_names: HashMap<String, String>,
@@ -71,17 +82,17 @@ impl Sanitizer {
     }
 
     fn sanitize_line(&mut self, value: &mut Value) {
-        if let Some(processes) = value.get_mut("processes").and_then(Value::as_array_mut) {
+        if let Some(processes) = sampled_array_mut(value, "processes") {
             for p in processes {
                 self.sanitize_process(p);
             }
         }
-        if let Some(networks) = value.get_mut("networks").and_then(Value::as_array_mut) {
+        if let Some(networks) = sampled_array_mut(value, "networks") {
             for n in networks {
                 self.sanitize_network(n);
             }
         }
-        if let Some(disks) = value.get_mut("disks").and_then(Value::as_array_mut) {
+        if let Some(disks) = sampled_array_mut(value, "disks") {
             for d in disks {
                 if let Some(mp) = d.get("mountPoint").and_then(Value::as_str) {
                     let redacted = redact_home_dir(mp);
@@ -178,9 +189,13 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // Buffered: an unbuffered writer means one write() syscall per line,
+    // which is fine on a local filesystem but pathologically slow on a 9p
+    // mount (e.g. /mnt/c under WSL2) — seconds per line rather than
+    // effectively instant.
     let mut out: Box<dyn Write> = match output_path {
-        Some(path) => Box::new(std::fs::File::create(path)?),
-        None => Box::new(io::stdout()),
+        Some(path) => Box::new(io::BufWriter::new(std::fs::File::create(path)?)),
+        None => Box::new(io::BufWriter::new(io::stdout())),
     };
 
     let mut sanitizer = Sanitizer::new();
@@ -193,7 +208,7 @@ fn main() -> io::Result<()> {
         sanitizer.sanitize_line(&mut value);
         writeln!(out, "{value}")?;
     }
-    Ok(())
+    out.flush()
 }
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -271,17 +286,35 @@ mod tests {
 
     #[test]
     fn full_line_round_trips_through_json() {
+        // Mirrors the real Phase 1A wire shape: array sections live under
+        // `<field>.value`, not directly on the field (see `Sampled<T>`).
         let mut s = Sanitizer::new();
         let mut line = serde_json::json!({
             "timestampMs": 1,
-            "processes": [{"pid": 1, "name": "claude", "cpuPercent": 0.0, "memory": 1, "gpuMem": null, "exe": "/home/helbawi/x", "user": null}],
-            "networks": [{"name": "eth0", "downloadRate": 0.0, "uploadRate": 0.0, "totalRx": 0, "totalTx": 0}],
-            "disks": [{"mountPoint": "/home/helbawi/project"}]
+            "processes": {"value": [{"pid": 1, "name": "claude", "cpuPercent": 0.0, "memory": 1, "gpuMem": null, "exe": "/home/helbawi/x", "user": null}], "availability": {"state": "ok"}},
+            "networks": {"value": [{"name": "eth0", "downloadRate": 0.0, "uploadRate": 0.0, "totalRx": 0, "totalTx": 0}], "availability": {"state": "ok"}},
+            "disks": {"value": [{"mountPoint": "/home/helbawi/project"}], "availability": {"state": "ok"}}
         });
         s.sanitize_line(&mut line);
-        assert_eq!(line["processes"][0]["exe"], "/home/USER/x");
-        assert_eq!(line["disks"][0]["mountPoint"], "/home/USER/project");
+        assert_eq!(line["processes"]["value"][0]["exe"], "/home/USER/x");
+        assert_eq!(
+            line["disks"]["value"][0]["mountPoint"],
+            "/home/USER/project"
+        );
         // timestampMs and numeric fields are untouched.
         assert_eq!(line["timestampMs"], 1);
+    }
+
+    #[test]
+    fn sections_with_no_value_are_left_alone_not_panicked_on() {
+        // An unavailable section (`value: null`, e.g. Failed/Unsupported)
+        // must not crash the sanitizer.
+        let mut s = Sanitizer::new();
+        let mut line = serde_json::json!({
+            "timestampMs": 1,
+            "processes": {"value": null, "availability": {"state": "failed", "code": "timeout", "detail": null}},
+        });
+        s.sanitize_line(&mut line);
+        assert_eq!(line["processes"]["value"], serde_json::Value::Null);
     }
 }

@@ -1,12 +1,24 @@
+import { useEffect, useState } from "react";
 import { formatUptime } from "../lib/format";
 import { useStore } from "../state/store";
+
+const STALE_AFTER_MS = 2500;
 
 export default function StatusBar() {
   const snapshot = useStore((s) => s.snapshot);
   const info = useStore((s) => s.systemInfo);
   const hotkey = useStore((s) => s.settings.hotkey);
 
-  const stale = !snapshot || Date.now() - snapshot.timestampMs > 2500;
+  // The store only updates on a new frame, so staleness (telemetry having
+  // STOPPED) can never be observed by re-rendering on store change alone —
+  // this ticks independently so the dot actually flips when frames stop.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const stale = !snapshot || now - snapshot.timestampMs > STALE_AFTER_MS;
 
   return (
     <footer className="statusbar">

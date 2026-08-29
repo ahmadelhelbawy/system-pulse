@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "src/styles/global.css"
+        ],
+        "createdAt": "2026-08-29T08:22:38.679Z",
+        "reason": "Pre-existing System Pulse 1.0 CSS (ProgressBar/.core__fill transitions), untouched in Phase 1A; visual redesign is explicitly Phase 6 scope per the System Pulse 2.0 master plan"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/styles/global.css"
+        ],
+        "createdAt": "2026-08-29T08:22:38.718Z",
+        "reason": "Pre-existing System Pulse 1.0 CSS (.alert border-left), untouched in Phase 1A; visual redesign is explicitly Phase 6 scope per the System Pulse 2.0 master plan"
+      }
+    ]
+  }
+}

@@ -4,13 +4,21 @@ import {
   formatCelsius,
   formatPercent,
 } from "../lib/format";
+import { availabilityDetail, availabilityLabel } from "../lib/availability";
 import { useStore } from "../state/store";
 import MetricCard from "./common/MetricCard";
 import ProgressBar from "./common/ProgressBar";
 import EmptyState from "./common/EmptyState";
 
 export default function GpuPanel() {
-  const gpu = useStore((s) => s.snapshot?.gpu ?? []);
+  // A stable empty-array reference matters here: `useSyncExternalStore`
+  // (which Zustand v5 is built on) calls the selector twice per render and
+  // compares by reference — `s.snapshot?.gpu.value ?? []` would otherwise
+  // allocate a fresh `[]` on every call while `gpu` is unavailable,
+  // triggering React's "getSnapshot should be cached" warning and a render
+  // loop until the first real value arrives.
+  const gpu = useStore((s) => s.snapshot?.gpu.value ?? EMPTY_GPU);
+  const availability = useStore((s) => s.snapshot?.gpu.availability);
   const hasSnapshot = useStore((s) => s.snapshot != null);
 
   if (!hasSnapshot) {
@@ -19,8 +27,11 @@ export default function GpuPanel() {
   if (gpu.length === 0) {
     return (
       <EmptyState
-        title="No GPU detected"
-        detail="NVIDIA GPU metrics (via NVML) appear here automatically when a supported GPU is present. AMD/Intel adapters can be added behind the same interface."
+        title={availability && availability.state !== "ok" ? availabilityLabel(availability) : "No GPU detected"}
+        detail={
+          (availability && availabilityDetail(availability)) ??
+          "NVIDIA GPU metrics (via NVML) appear here automatically when a supported GPU is present. AMD/Intel adapters can be added behind the same interface."
+        }
       />
     );
   }
@@ -32,6 +43,8 @@ export default function GpuPanel() {
     </div>
   );
 }
+
+const EMPTY_GPU: GpuSnapshot[] = [];
 
 function GpuCard({ gpu }: { gpu: GpuSnapshot }) {
   const vramPct =

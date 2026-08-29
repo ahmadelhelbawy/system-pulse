@@ -13,8 +13,8 @@ const TABS: { id: Tab; label: string }[] = [
 export default function Toolbar() {
   const tab = useStore((s) => s.tab);
   const setTab = useStore((s) => s.setTab);
-  const cpu = useStore((s) => s.snapshot?.cpu.totalPercent ?? 0);
-  const mem = useStore((s) => s.snapshot?.memory.usedPercent ?? 0);
+  const cpu = useStore((s) => s.snapshot?.cpu.value?.totalPercent ?? 0);
+  const mem = useStore((s) => s.snapshot?.memory.value?.usedPercent ?? 0);
   const healthCount = useStore((s) => s.snapshot?.health.length ?? 0);
   const compact = useStore((s) => s.settings.compactMode);
 

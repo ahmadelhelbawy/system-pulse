@@ -1,9 +1,14 @@
+import type { HealthAlert } from "../lib/contracts";
 import { useStore } from "../state/store";
 import Badge from "./common/Badge";
 import EmptyState from "./common/EmptyState";
 
+// A stable reference for the "no snapshot yet" case — see the matching
+// comment in GpuPanel.tsx for why an inline `?? []` would otherwise loop.
+const EMPTY_HEALTH: HealthAlert[] = [];
+
 export default function HealthPanel() {
-  const health = useStore((s) => s.snapshot?.health ?? []);
+  const health = useStore((s) => s.snapshot?.health ?? EMPTY_HEALTH);
   const hasSnapshot = useStore((s) => s.snapshot != null);
   const setTab = useStore((s) => s.setTab);
   const selectProcess = useStore((s) => s.selectProcess);

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { api } from "../lib/ipc";
+import { useEffect, useState } from "react";
+import { api, isAppError } from "../lib/ipc";
 import { useStore } from "../state/store";
 
 export default function ConfirmDialog() {
@@ -9,16 +9,31 @@ export default function ConfirmDialog() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Escape closes the dialog even though it's a modal with no native <dialog>
+  // element behind it — the backdrop click-outside handler doesn't cover this.
+  useEffect(() => {
+    if (!confirmKill) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelKill();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmKill, cancelKill]);
+
   if (!confirmKill) return null;
 
   const confirm = async () => {
     setBusy(true);
     setError(null);
     try {
-      await api.killProcess(confirmKill.pid);
+      await api.killProcess(confirmKill.identity);
       cancelKill();
     } catch (e) {
-      setError(String(e));
+      setError(
+        isAppError(e) && e.kind === "identityMismatch"
+          ? "That process already exited or was replaced by another one."
+          : String(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -37,7 +52,7 @@ export default function ConfirmDialog() {
           End process?
         </h2>
         <p className="modal__body">
-          End <strong>{confirmKill.name}</strong> (PID {confirmKill.pid})?
+          End <strong>{confirmKill.name}</strong> (PID {confirmKill.identity.pid})?
           Unsaved data in this process may be lost.
         </p>
         {!elevated && (
@@ -48,14 +63,13 @@ export default function ConfirmDialog() {
         )}
         {error && <p className="modal__error">{error}</p>}
         <div className="modal__actions">
-          <button className="button" onClick={cancelKill} disabled={busy}>
+          <button className="button" onClick={cancelKill} disabled={busy} autoFocus>
             Cancel
           </button>
           <button
             className="button button--danger"
             onClick={confirm}
             disabled={busy}
-            autoFocus
           >
             {busy ? "Ending…" : "End process"}
           </button>

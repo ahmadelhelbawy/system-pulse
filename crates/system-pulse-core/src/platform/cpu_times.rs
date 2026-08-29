@@ -6,9 +6,11 @@
 
 use crate::types::CpuTimes;
 
-/// A source of raw cumulative CPU tick counters.
+/// A source of raw cumulative CPU tick counters. Returns `None` when the
+/// underlying read fails, so a collector failure is never silently mistaken
+/// for an idle system (see `Availability` in `crate::model`).
 pub trait CpuTimesSource: Send {
-    fn read(&self) -> CpuTimes;
+    fn read(&self) -> Option<CpuTimes>;
 }
 
 /// Return the platform-appropriate source.
@@ -33,7 +35,7 @@ pub struct WindowsCpuTimes;
 #[cfg(target_os = "windows")]
 impl CpuTimesSource for WindowsCpuTimes {
     #[allow(unsafe_code)] // single FFI call; arguments are valid out-pointers.
-    fn read(&self) -> CpuTimes {
+    fn read(&self) -> Option<CpuTimes> {
         use windows::Win32::Foundation::FILETIME;
         use windows::Win32::System::Threading::GetSystemTimes;
 
@@ -55,12 +57,12 @@ impl CpuTimesSource for WindowsCpuTimes {
         if ok.is_ok() {
             let idle_ticks = ft_to_u64(idle);
             let total_ticks = ft_to_u64(kernel) + ft_to_u64(user);
-            CpuTimes {
+            Some(CpuTimes {
                 idle: idle_ticks,
                 total: total_ticks,
-            }
+            })
         } else {
-            CpuTimes::default()
+            None
         }
     }
 }
@@ -75,10 +77,8 @@ pub struct LinuxCpuTimes;
 
 #[cfg(target_os = "linux")]
 impl CpuTimesSource for LinuxCpuTimes {
-    fn read(&self) -> CpuTimes {
-        let Ok(contents) = std::fs::read_to_string("/proc/stat") else {
-            return CpuTimes::default();
-        };
+    fn read(&self) -> Option<CpuTimes> {
+        let contents = std::fs::read_to_string("/proc/stat").ok()?;
         for line in contents.lines() {
             if let Some(rest) = line.strip_prefix("cpu ") {
                 let fields: Vec<u64> = rest
@@ -89,21 +89,59 @@ impl CpuTimesSource for LinuxCpuTimes {
                 if fields.len() >= 5 {
                     let idle = fields[3] + fields[4];
                     let total: u64 = fields.iter().sum();
-                    return CpuTimes { idle, total };
+                    return Some(CpuTimes { idle, total });
                 }
             }
         }
-        CpuTimes::default()
+        None
     }
 }
 
-/// Fallback for unsupported platforms (yields a stable zero).
+/// Fallback for unsupported platforms: no CPU-time source exists.
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub struct ZeroCpuTimes;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 impl CpuTimesSource for ZeroCpuTimes {
-    fn read(&self) -> CpuTimes {
-        CpuTimes::default()
+    fn read(&self) -> Option<CpuTimes> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingSource;
+    impl CpuTimesSource for FailingSource {
+        fn read(&self) -> Option<CpuTimes> {
+            None
+        }
+    }
+
+    struct WorkingSource(CpuTimes);
+    impl CpuTimesSource for WorkingSource {
+        fn read(&self) -> Option<CpuTimes> {
+            Some(self.0)
+        }
+    }
+
+    #[test]
+    fn failing_source_reports_none_not_zero_times() {
+        // A failed read must be distinguishable from a genuine zero-delta
+        // reading — `None`, not `Some(CpuTimes::default())` — so callers can
+        // surface `Availability::Failed` instead of a fabricated 0%.
+        let source = FailingSource;
+        assert_eq!(source.read(), None);
+    }
+
+    #[test]
+    fn working_source_reports_some() {
+        let times = CpuTimes {
+            idle: 10,
+            total: 20,
+        };
+        let source = WorkingSource(times);
+        assert_eq!(source.read(), Some(times));
     }
 }

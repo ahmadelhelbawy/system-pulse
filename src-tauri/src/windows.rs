@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use system_pulse_core::gpu::default_gpu_provider;
 use system_pulse_core::sampling::TelemetryService;
 use system_pulse_core::Hotkey;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -16,10 +15,7 @@ use crate::{AppState, TauriSink};
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let settings = crate::settings::load(app);
 
-    let telemetry = TelemetryService::new(
-        Arc::new(TauriSink { app: app.clone() }),
-        default_gpu_provider(),
-    );
+    let telemetry = TelemetryService::new(Arc::new(TauriSink { app: app.clone() }));
     telemetry.spawn();
 
     app.manage(AppState {
@@ -78,7 +74,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             .unwrap_or(true);
         if hide {
             api.prevent_close();
-            hide_window(&window.app_handle());
+            hide_window(window.app_handle());
         }
     }
 }

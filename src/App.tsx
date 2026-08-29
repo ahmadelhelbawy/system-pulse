@@ -9,6 +9,7 @@ import HealthPanel from "./components/HealthPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusBar from "./components/StatusBar";
 import ConfirmDialog from "./components/ConfirmDialog";
+import ErrorBoundary from "./components/common/ErrorBoundary";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -32,15 +33,17 @@ export default function App() {
 
     (async () => {
       try {
-        const [settings, info, elevated] = await Promise.all([
+        const [settings, info, elevated, capabilities] = await Promise.all([
           api.getSettings(),
           api.getSystemInfo(),
           api.isElevated(),
+          api.getCapabilities(),
         ]);
         if (cancelled) return;
         useStore.getState().setSettings(settings);
         useStore.getState().setSystemInfo(info);
         useStore.getState().setElevated(elevated);
+        useStore.getState().setCapabilities(capabilities);
       } catch (err) {
         console.error("System Pulse init failed", err);
       }
@@ -48,7 +51,14 @@ export default function App() {
 
     onTelemetry((snapshot) => useStore.getState().setSnapshot(snapshot)).then(
       (u) => {
-        unlisten = u;
+        // StrictMode double-invokes effects in dev; if cleanup already ran
+        // before this promise resolved, unlisten immediately instead of
+        // leaking a second handler onto the next mount.
+        if (cancelled) {
+          u();
+        } else {
+          unlisten = u;
+        }
       },
     );
 
@@ -90,11 +100,31 @@ export default function App() {
     <div className={`app${compactMode ? " compact" : ""}`}>
       <Toolbar />
       <main className="content">
-        {tab === "overview" && <OverviewPanel />}
-        {tab === "processes" && <ProcessesPanel />}
-        {tab === "gpu" && <GpuPanel />}
-        {tab === "health" && <HealthPanel />}
-        {tab === "settings" && <SettingsPanel />}
+        {tab === "overview" && (
+          <ErrorBoundary label="Overview">
+            <OverviewPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "processes" && (
+          <ErrorBoundary label="Processes">
+            <ProcessesPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "gpu" && (
+          <ErrorBoundary label="GPU">
+            <GpuPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "health" && (
+          <ErrorBoundary label="Health">
+            <HealthPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "settings" && (
+          <ErrorBoundary label="Settings">
+            <SettingsPanel />
+          </ErrorBoundary>
+        )}
       </main>
       <StatusBar />
       <ConfirmDialog />

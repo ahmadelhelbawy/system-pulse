@@ -16,3 +16,12 @@
 # RC_<target_with_underscores>, then RC (see its env_target_and_rc()) — the
 # first form is set here for precision.
 "RC_x86_64-pc-windows-msvc" = { value = ".tools/llvm-rc", relative = true }
+
+# ts-rs codegen (crates/system-pulse-core -> src/lib/contracts.ts): export
+# bindings into a git-ignored scratch directory that scripts/gen-contracts.mjs
+# then consolidates into the single committed contracts.ts file the frontend
+# imports from. `i64`/`u64` default to `bigint` in ts-rs; every one of this
+# crate's large integers (byte counters, UnixMillis) is documented as staying
+# a plain JS `number` (see types.rs / model/time.rs), so this is not optional.
+TS_RS_EXPORT_DIR = { value = "target/ts-bindings", relative = true }
+TS_RS_LARGE_INT = "number"

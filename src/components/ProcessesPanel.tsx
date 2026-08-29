@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
-import type { ProcessSnapshot } from "../lib/contracts";
+import type { ProcessIdentity, ProcessSnapshot } from "../lib/contracts";
 import { formatBytes, formatPercent } from "../lib/format";
 import { selectProcessRow, useStore, type ProcessSortKey } from "../state/store";
 import EmptyState from "./common/EmptyState";
+
+/** A row can only be killed if the backend recorded a creation time for it
+ * — without one there's no `ProcessIdentity` to safely revalidate against
+ * before terminating (see `system_pulse_core::process::ProcessIdentity`). */
+function identityOf(p: ProcessSnapshot): ProcessIdentity | null {
+  return p.startedAt == null ? null : { pid: p.pid, startedAt: p.startedAt };
+}
 
 export default function ProcessesPanel() {
   const snapshot = useStore((s) => s.snapshot);
@@ -30,7 +37,7 @@ export default function ProcessesPanel() {
   const rows = useMemo(() => {
     if (!snapshot) return [];
     const q = query.trim().toLowerCase();
-    let list = snapshot.processes;
+    let list = snapshot.processes.value ?? [];
     if (q) {
       list = list.filter(
         (p) =>
@@ -75,8 +82,11 @@ export default function ProcessesPanel() {
       selectProcess(null);
     } else if (e.key === "Enter" || e.key === "Delete") {
       if (idx >= 0) {
-        e.preventDefault();
-        requestKill(rows[idx].pid, rows[idx].name);
+        const identity = identityOf(rows[idx]);
+        if (identity) {
+          e.preventDefault();
+          requestKill(identity, rows[idx].name);
+        }
       }
     }
   };
@@ -94,7 +104,7 @@ export default function ProcessesPanel() {
           autoComplete="off"
         />
         <span className="processes__count">
-          {rows.length} of {snapshot.processes.length}
+          {rows.length} of {snapshot.processes.value?.length ?? 0}
         </span>
       </div>
       <div className="processes__layout">
@@ -121,7 +131,10 @@ export default function ProcessesPanel() {
                   key={p.pid}
                   className={selectedPid === p.pid ? "ptable__row--selected" : ""}
                   onClick={() => selectProcess(p.pid)}
-                  onDoubleClick={() => requestKill(p.pid, p.name)}
+                  onDoubleClick={() => {
+                    const identity = identityOf(p);
+                    if (identity) requestKill(identity, p.name);
+                  }}
                 >
                   <td className="mono">{p.pid}</td>
                   <td className="ptable__name" title={p.exe ?? p.name}>
@@ -147,7 +160,10 @@ export default function ProcessesPanel() {
         {selected && (
           <ProcessDetails
             process={selected}
-            onKill={() => requestKill(selected.pid, selected.name)}
+            onKill={() => {
+              const identity = identityOf(selected);
+              if (identity) requestKill(identity, selected.name);
+            }}
             onClose={() => selectProcess(null)}
           />
         )}
@@ -208,7 +224,12 @@ function ProcessDetails({
         <Detail label="User" value={process.user ?? "—"} />
         <Detail label="Executable" value={process.exe ?? "Access denied"} />
       </dl>
-      <button className="button button--danger button--block" onClick={onKill}>
+      <button
+        className="button button--danger button--block"
+        onClick={onKill}
+        disabled={identityOf(process) == null}
+        title={identityOf(process) == null ? "Process identity unavailable" : undefined}
+      >
         End process
       </button>
     </aside>
