@@ -31,6 +31,25 @@ import type {
   TimeRange,
 } from "./contracts";
 
+/**
+ * Whether the Tauri IPC bridge is actually attached to this document.
+ *
+ * `@tauri-apps/api` reaches through `window.__TAURI_INTERNALS__` for both
+ * `invoke` and `listen`; when the page is served somewhere the webview
+ * hasn't injected that object (a plain browser, or a build whose
+ * `devUrl` is being loaded without the Tauri runtime), every backend call
+ * fails and the app would otherwise sit on "acquiring telemetry" forever
+ * with no way to tell that apart from a slow backend. The shell checks
+ * this once at startup so the condition can be reported instead of
+ * silently swallowed.
+ */
+export function isTauriBridgeAvailable(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ != null
+  );
+}
+
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (settings: Settings) =>

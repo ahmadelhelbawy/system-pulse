@@ -114,6 +114,13 @@ interface TelemetrySlice {
 interface UiSlice {
   settings: Settings;
   elevated: boolean;
+  /**
+   * Set when the Tauri IPC bridge isn't attached, so the shell can say so
+   * outright instead of leaving every panel on "acquiring telemetry"
+   * indefinitely — a state that is otherwise indistinguishable from a slow
+   * backend. `null` in the normal (bridge present) case.
+   */
+  bridgeError: string | null;
   tab: Tab;
   processQuery: string;
   processSortKey: ProcessSortKey;
@@ -123,6 +130,7 @@ interface UiSlice {
   recordingHotkey: boolean;
   setSettings: (s: Settings) => void;
   setElevated: (e: boolean) => void;
+  setBridgeError: (e: string | null) => void;
   setTab: (t: Tab) => void;
   setProcessQuery: (q: string) => void;
   setProcessSort: (key: ProcessSortKey) => void;
@@ -186,6 +194,7 @@ const createTelemetrySlice = (
 const createUiSlice = (set: (fn: (s: Store) => Partial<Store>) => void): UiSlice => ({
   settings: DEFAULT_SETTINGS,
   elevated: false,
+  bridgeError: null,
   tab: "overview",
   processQuery: "",
   processSortKey: "cpu",
@@ -195,6 +204,7 @@ const createUiSlice = (set: (fn: (s: Store) => Partial<Store>) => void): UiSlice
   recordingHotkey: false,
   setSettings: (settings) => set(() => ({ settings })),
   setElevated: (elevated) => set(() => ({ elevated })),
+  setBridgeError: (bridgeError) => set(() => ({ bridgeError })),
   setTab: (tab) => set(() => ({ tab })),
   setProcessQuery: (processQuery) => set(() => ({ processQuery })),
   setProcessSort: (key) =>

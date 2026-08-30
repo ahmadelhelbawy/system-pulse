@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { api, onTelemetry } from "./lib/ipc";
+import { api, isTauriBridgeAvailable, onTelemetry } from "./lib/ipc";
 import { useStore, type Tab } from "./state/store";
 import CommandBar from "./components/CommandBar";
 import LeftRail from "./components/LeftRail";
@@ -51,6 +51,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export default function App() {
   const tab = useStore((s) => s.tab);
   const compactMode = useStore((s) => s.settings.compactMode);
+  const bridgeError = useStore((s) => s.bridgeError);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -73,6 +74,21 @@ export default function App() {
         console.error("System Pulse init failed", err);
       }
     })();
+
+    // If the webview never injected the IPC bridge, every backend call
+    // below is going to fail. Detect that once, up front, so the shell can
+    // say so plainly — otherwise the app sits on "acquiring telemetry"
+    // forever, which is indistinguishable from a merely slow backend and
+    // gives no clue that the frontend is running without a backend at all.
+    if (!isTauriBridgeAvailable()) {
+      useStore
+        .getState()
+        .setBridgeError(
+          "The Tauri IPC bridge is not attached to this window, so no backend data can be read. " +
+            "This usually means the app was built without the `custom-protocol` feature and is " +
+            "loading its UI from the dev server — run `pnpm tauri dev` or `pnpm tauri build`.",
+        );
+    }
 
     // `listen()` can fail *synchronously* (it throws, rather than
     // rejecting, when the Tauri event bridge isn't attached), so this needs
@@ -106,7 +122,16 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      unlisten?.();
+      // `unlisten()` is async and round-trips through the bridge, so it
+      // rejects if the bridge has already gone away (window teardown, or a
+      // StrictMode remount after the page lost it). Unguarded that becomes
+      // an unhandled rejection during unmount — the same unguarded-async
+      // shape as the `listen()` throw above, so it gets the same treatment.
+      try {
+        void Promise.resolve(unlisten?.()).catch(() => {});
+      } catch {
+        /* bridge already detached; nothing to release */
+      }
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
@@ -138,6 +163,19 @@ export default function App() {
       <CommandBar />
       <LeftRail />
       <main className="content" role="tabpanel" aria-label={label}>
+        {bridgeError && (
+          <div
+            className="alert alert--critical"
+            role="alert"
+            style={{ marginBottom: "var(--space-6)" }}
+          >
+            <div className="alert__body">
+              <div className="alert__title">Backend unreachable</div>
+              <div className="alert__detail">{bridgeError}</div>
+            </div>
+            <div className="alert__meta">NO IPC</div>
+          </div>
+        )}
         {/* Keyed so a crash in one screen is cleared when the user
             navigates away, rather than persisting into the next. */}
         <ErrorBoundary key={tab} label={label}>
