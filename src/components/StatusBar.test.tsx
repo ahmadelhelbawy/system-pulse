@@ -46,7 +46,7 @@ describe("StatusBar staleness", () => {
     useStore.getState().setSnapshot(minimalSnapshot(now));
 
     render(<StatusBar />);
-    expect(screen.getByText("live")).toBeTruthy();
+    expect(screen.getByText("LIVE TELEMETRY")).toBeTruthy();
 
     // 1.0 defect: nothing re-rendered this component when telemetry simply
     // *stopped* (no new store write), so the dot stayed on "live" forever.
@@ -58,6 +58,6 @@ describe("StatusBar staleness", () => {
       vi.advanceTimersByTime(5000);
     });
 
-    expect(screen.getByText("paused")).toBeTruthy();
+    expect(screen.getByText("PAUSED")).toBeTruthy();
   });
 });

@@ -2,16 +2,28 @@ import { useEffect, useMemo, useState } from "react";
 import type { HistoryPoint, SeriesId, TimeRange } from "../lib/contracts";
 import { api } from "../lib/ipc";
 import { formatRate } from "../lib/format";
+import { useStore } from "../state/store";
+import Panel from "./common/Panel";
 import EmptyState from "./common/EmptyState";
 
-const SERIES: { id: SeriesId; label: string; unit: "percent" | "rate" }[] = [
-  { id: "cpuPercent", label: "CPU", unit: "percent" },
-  { id: "memUsedPercent", label: "Memory", unit: "percent" },
-  { id: "gpuPercent", label: "GPU", unit: "percent" },
-  { id: "diskReadRate", label: "Disk read", unit: "rate" },
-  { id: "diskWriteRate", label: "Disk write", unit: "rate" },
-  { id: "netDownloadRate", label: "Net down", unit: "rate" },
-  { id: "netUploadRate", label: "Net up", unit: "rate" },
+/** Each series carries the anomaly `category` the Rust detector uses for
+ * it (see `analysis::anomaly::series_key`), so a live anomaly finding can
+ * be matched to the chart currently on screen without string-munging a
+ * display label. */
+const SERIES: {
+  id: SeriesId;
+  label: string;
+  unit: "percent" | "rate";
+  anomalyKey: string;
+  color: string;
+}[] = [
+  { id: "cpuPercent", label: "CPU", unit: "percent", anomalyKey: "anomaly-cpu", color: "var(--accent)" },
+  { id: "memUsedPercent", label: "Memory", unit: "percent", anomalyKey: "anomaly-memory", color: "var(--violet)" },
+  { id: "gpuPercent", label: "GPU", unit: "percent", anomalyKey: "anomaly-gpu", color: "var(--ok)" },
+  { id: "diskReadRate", label: "Disk read", unit: "rate", anomalyKey: "anomaly-disk-read", color: "var(--accent)" },
+  { id: "diskWriteRate", label: "Disk write", unit: "rate", anomalyKey: "anomaly-disk-write", color: "var(--violet)" },
+  { id: "netDownloadRate", label: "Net down", unit: "rate", anomalyKey: "anomaly-net-download", color: "var(--accent)" },
+  { id: "netUploadRate", label: "Net up", unit: "rate", anomalyKey: "anomaly-net-upload", color: "var(--warning)" },
 ];
 
 // Matches `system_pulse_core::history::retention`'s raw window and rollup
@@ -52,10 +64,33 @@ export default function TrendsPanel() {
 
   const series = SERIES.find((s) => s.id === seriesId)!;
 
+  // A live anomaly on the charted series annotates the chart. This marks
+  // "the detector is flagging this series right now" — it deliberately does
+  // NOT place a marker at a historical instant, because the detector's
+  // per-tick decisions are not themselves recorded in history.
+  const anomalies = useStore((s) => s.snapshot?.anomalies ?? []);
+  const activeAnomaly = anomalies.find((a) => a.category === series.anomalyKey);
+
+  const stats = useMemo(() => {
+    if (!points || points.length === 0) return null;
+    const vs = points.map((p) => p.value);
+    return {
+      min: Math.min(...vs),
+      max: Math.max(...vs),
+      avg: vs.reduce((a, b) => a + b, 0) / vs.length,
+      n: vs.length,
+    };
+  }, [points]);
+
+  const fmt = (v: number) =>
+    series.unit === "percent" ? `${v.toFixed(1)}%` : formatRate(v);
+
   return (
-    <div className="trends">
-      <div className="trends__toolbar">
-        <div className="trends__group" role="tablist" aria-label="Series">
+    <div className="screen">
+      <h1 className="screen__heading">Trends</h1>
+
+      <div className="toolbar-row">
+        <nav className="tabs" role="tablist" aria-label="Series">
           {SERIES.map((s) => (
             <button
               key={s.id}
@@ -67,8 +102,9 @@ export default function TrendsPanel() {
               {s.label}
             </button>
           ))}
-        </div>
-        <div className="trends__group" role="tablist" aria-label="Range">
+        </nav>
+        <span className="toolbar-row__spacer" />
+        <nav className="tabs" role="tablist" aria-label="Range">
           {RANGES.map((r) => (
             <button
               key={r.label}
@@ -80,22 +116,65 @@ export default function TrendsPanel() {
               {r.label}
             </button>
           ))}
-        </div>
+        </nav>
       </div>
 
-      {error != null ? (
-        <EmptyState title="Could not load history" detail={error} />
-      ) : points == null ? (
-        <EmptyState title="Loading…" />
-      ) : points.length === 0 ? (
-        <EmptyState
-          title="No recorded data yet"
-          detail="History accumulates while System Pulse runs — check back shortly, or pick a shorter range."
-        />
-      ) : (
-        <TimeSeriesChart points={points} unit={series.unit} />
+      {activeAnomaly && (
+        <div className="alert alert--warning" role="status">
+          <div className="alert__body">
+            <div className="alert__title">{activeAnomaly.title}</div>
+            <div className="alert__detail">{activeAnomaly.detail}</div>
+          </div>
+          <div className="alert__meta">ANOMALY · NOW</div>
+        </div>
       )}
+
+      <div className="grid grid--tight">
+        <Stat label="Samples" value={stats ? String(stats.n) : "—"} />
+        <Stat label="Minimum" value={stats ? fmt(stats.min) : "—"} />
+        <Stat label="Average" value={stats ? fmt(stats.avg) : "—"} />
+        <Stat label="Peak" value={stats ? fmt(stats.max) : "—"} />
+      </div>
+
+      <Panel
+        title={`${series.label} History`}
+        sub="// recorded telemetry"
+        aside={RANGES.find((r) => r.spanMs === spanMs)?.label}
+      >
+        {error != null ? (
+          <EmptyState title="Could not load history" detail={error} />
+        ) : points == null ? (
+          <EmptyState title="Loading…" />
+        ) : points.length === 0 ? (
+          <EmptyState
+            title="No recorded data yet"
+            detail="History accumulates while System Pulse runs — check back shortly, or pick a shorter range."
+          />
+        ) : (
+          <TimeSeriesChart
+            points={points}
+            unit={series.unit}
+            color={series.color}
+          />
+        )}
+      </Panel>
     </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <Panel title={label}>
+      <div className="readout">
+        <span
+          className={`readout__value readout__value--sm${
+            value === "—" ? " is-faint" : ""
+          }`}
+        >
+          {value}
+        </span>
+      </div>
+    </Panel>
   );
 }
 
@@ -110,15 +189,17 @@ export default function TrendsPanel() {
 function TimeSeriesChart({
   points,
   unit,
+  color,
 }: {
   points: HistoryPoint[];
   unit: "percent" | "rate";
+  color: string;
 }) {
   const width = 800;
-  const height = 240;
-  const padding = { top: 16, right: 16, bottom: 28, left: 48 };
+  const height = 260;
+  const padding = { top: 16, right: 16, bottom: 28, left: 60 };
 
-  const { path, yTicks, xTicks, formatValue } = useMemo(() => {
+  const { path, area, yTicks, xTicks, formatValue } = useMemo(() => {
     const minX = points[0].tsMs;
     const maxX = points[points.length - 1].tsMs;
     const spanX = Math.max(1, maxX - minX);
@@ -137,8 +218,13 @@ function TimeSeriesChart({
     const path = points
       .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.tsMs).toFixed(1)},${y(p.value).toFixed(1)}`)
       .join(" ");
+    const baseline = padding.top + plotH;
+    const area = `${path} L${x(maxX).toFixed(1)},${baseline} L${x(minX).toFixed(1)},${baseline} Z`;
 
-    const yTicks = [minY, maxY / 2, maxY].map((v) => ({ v, y: y(v) }));
+    const yTicks = [minY, maxY / 4, maxY / 2, (maxY * 3) / 4, maxY].map((v) => ({
+      v,
+      y: y(v),
+    }));
     const tickCount = Math.min(5, points.length);
     const xTicks = Array.from({ length: tickCount }, (_, i) => {
       const tsMs = minX + (spanX * i) / Math.max(1, tickCount - 1);
@@ -148,16 +234,22 @@ function TimeSeriesChart({
     const formatValue =
       unit === "percent" ? (v: number) => `${v.toFixed(0)}%` : (v: number) => formatRate(v);
 
-    return { path, yTicks, xTicks, formatValue };
+    return { path, area, yTicks, xTicks, formatValue };
   }, [points, unit]);
 
   return (
     <svg
-      className="trends__chart"
+      className="chart"
       viewBox={`0 0 ${width} ${height}`}
       role="img"
       aria-label="History chart"
     >
+      <defs>
+        <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
       {yTicks.map((t) => (
         <g key={t.v}>
           <line
@@ -165,9 +257,15 @@ function TimeSeriesChart({
             x2={width - padding.right}
             y1={t.y}
             y2={t.y}
-            className="trends__gridline"
+            className="chart__grid"
           />
-          <text x={padding.left - 8} y={t.y} className="trends__axis-label" textAnchor="end" dominantBaseline="middle">
+          <text
+            x={padding.left - 8}
+            y={t.y}
+            className="chart__axis"
+            textAnchor="end"
+            dominantBaseline="middle"
+          >
             {formatValue(t.v)}
           </text>
         </g>
@@ -177,13 +275,17 @@ function TimeSeriesChart({
           key={t.tsMs}
           x={t.x}
           y={height - padding.bottom + 16}
-          className="trends__axis-label"
+          className="chart__axis"
           textAnchor="middle"
         >
-          {new Date(t.tsMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          {new Date(t.tsMs).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
         </text>
       ))}
-      <path d={path} className="trends__line" fill="none" />
+      <path d={area} fill="url(#trend-fill)" stroke="none" />
+      <path d={path} className="chart__line" stroke={color} fill="none" />
     </svg>
   );
 }

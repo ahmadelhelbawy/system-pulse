@@ -8,6 +8,7 @@ export default function StatusBar() {
   const snapshot = useStore((s) => s.snapshot);
   const info = useStore((s) => s.systemInfo);
   const hotkey = useStore((s) => s.settings.hotkey);
+  const interval = useStore((s) => s.settings.refreshIntervalMs);
 
   // The store only updates on a new frame, so staleness (telemetry having
   // STOPPED) can never be observed by re-rendering on store change alone —
@@ -23,17 +24,26 @@ export default function StatusBar() {
   return (
     <footer className="statusbar">
       <span className="statusbar__item">
-        Hotkey <kbd>{hotkey}</kbd> toggles this window
+        DATA ACQUISITION{" "}
+        <b className="mono is-muted">{stale ? "STANDBY" : "100%"}</b>
+      </span>
+      <span className="statusbar__item">
+        POLLING <b className="mono is-muted">{interval} ms</b>
+      </span>
+      <span className="statusbar__item">
+        HOTKEY <kbd>{hotkey}</kbd>
       </span>
       <span className="statusbar__spacer" />
       {info && (
-        <span className="statusbar__item statusbar__muted">
+        <span className="statusbar__item statusbar__muted" title={info.cpuModel}>
           {info.hostname} · {info.osName} · {info.cpuModel}
         </span>
       )}
       <span className="statusbar__item">
-        Uptime{" "}
-        {snapshot ? formatUptime(snapshot.uptimeSecs) : "—"}
+        UPTIME{" "}
+        <b className="mono is-muted">
+          {snapshot ? formatUptime(snapshot.uptimeSecs) : "—"}
+        </b>
       </span>
       <span
         className={`statusbar__item statusbar__dot${
@@ -41,7 +51,7 @@ export default function StatusBar() {
         }`}
         title={stale ? "Telemetry paused" : "Telemetry live"}
       >
-        {stale ? "paused" : "live"}
+        {stale ? "PAUSED" : "LIVE TELEMETRY"}
       </span>
     </footer>
   );

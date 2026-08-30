@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import type { ProcessIdentity, ProcessSnapshot } from "../lib/contracts";
+import { availabilityDetail, availabilityLabel } from "../lib/availability";
 import { formatBytes, formatPercent } from "../lib/format";
 import { selectProcessRow, useStore, type ProcessSortKey } from "../state/store";
+import Panel from "./common/Panel";
 import EmptyState from "./common/EmptyState";
 
 /** A row can only be killed if the backend recorded a creation time for it
@@ -9,6 +11,12 @@ import EmptyState from "./common/EmptyState";
  * before terminating (see `system_pulse_core::process::ProcessIdentity`). */
 function identityOf(p: ProcessSnapshot): ProcessIdentity | null {
   return p.startedAt == null ? null : { pid: p.pid, startedAt: p.startedAt };
+}
+
+function loadColor(v: number): string {
+  if (v >= 90) return "var(--danger)";
+  if (v >= 50) return "var(--warning)";
+  return "var(--text)";
 }
 
 export default function ProcessesPanel() {
@@ -23,7 +31,6 @@ export default function ProcessesPanel() {
   const requestKill = useStore((s) => s.requestKill);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const focus = () => {
@@ -34,14 +41,22 @@ export default function ProcessesPanel() {
     return () => window.removeEventListener("focus-process-search", focus);
   }, []);
 
+  /** pid -> the active alerts naming it, so a row can show why it's flagged. */
+  const alertedPids = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const a of snapshot?.health.alerts ?? []) {
+      if (a.pid != null) m.set(a.pid, a.title);
+    }
+    return m;
+  }, [snapshot]);
+
   const rows = useMemo(() => {
     if (!snapshot) return [];
     const q = query.trim().toLowerCase();
     let list = snapshot.processes.value ?? [];
     if (q) {
       list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) || String(p.pid).includes(q),
+        (p) => p.name.toLowerCase().includes(q) || String(p.pid).includes(q),
       );
     }
     const dir = sortDir === "asc" ? 1 : -1;
@@ -58,15 +73,23 @@ export default function ProcessesPanel() {
             return a.name.localeCompare(b.name) * dir;
         }
       })
+      // Bounded render: the backend may report thousands; the table is not
+      // virtualized, so this cap is what keeps the DOM node count flat.
       .slice(0, 500);
   }, [snapshot, query, sortKey, sortDir]);
 
   const selected = selectProcessRow(snapshot, selectedPid);
 
   if (!snapshot) {
-    return <EmptyState title="Waiting for telemetry…" detail="Process data is on the way." />;
+    return (
+      <EmptyState
+        title="Waiting for telemetry…"
+        detail="Process data is on the way."
+      />
+    );
   }
 
+  const total = snapshot.processes.value?.length ?? 0;
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!rows.length) return;
     const idx = rows.findIndex((p) => p.pid === selectedPid);
@@ -92,74 +115,118 @@ export default function ProcessesPanel() {
   };
 
   return (
-    <div className="processes">
-      <div className="processes__toolbar">
-        <input
-          ref={searchRef}
-          className="search"
-          placeholder="Search processes (name or PID)  ·  / or Ctrl+K"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          spellCheck={false}
-          autoComplete="off"
-        />
-        <span className="processes__count">
-          {rows.length} of {snapshot.processes.value?.length ?? 0}
-        </span>
-      </div>
+    <div className="screen">
+      <h1 className="screen__heading">Processes</h1>
+
       <div className="processes__layout">
-        <div
-          className="ptable-wrap"
-          ref={listRef}
-          tabIndex={0}
-          onKeyDown={onKeyDown}
+        <Panel
+          title="Process Table"
+          sub="// live"
+          aside={`${rows.length} / ${total}`}
+          flush
         >
-          <table className="ptable">
-            <thead>
-              <tr>
-                <SortableHeader k="pid" label="PID" sortKey={sortKey} sortDir={sortDir} setSort={setSort} />
-                <SortableHeader k="name" label="Name" sortKey={sortKey} sortDir={sortDir} setSort={setSort} />
-                <SortableHeader k="cpu" label="CPU" sortKey={sortKey} sortDir={sortDir} setSort={setSort} />
-                <SortableHeader k="memory" label="Memory" sortKey={sortKey} sortDir={sortDir} setSort={setSort} />
-                <th className="ptable__num">GPU</th>
-                <th className="ptable__muted">User</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr
-                  key={p.pid}
-                  className={selectedPid === p.pid ? "ptable__row--selected" : ""}
-                  onClick={() => selectProcess(p.pid)}
-                  onDoubleClick={() => {
-                    const identity = identityOf(p);
-                    if (identity) requestKill(identity, p.name);
-                  }}
-                >
-                  <td className="mono">{p.pid}</td>
-                  <td className="ptable__name" title={p.exe ?? p.name}>
-                    {p.name}
-                  </td>
-                  <td className="mono">{formatPercent(p.cpuPercent)}</td>
-                  <td className="mono">{formatBytes(p.memory)}</td>
-                  <td className="mono">
-                    {p.gpuMem != null ? formatBytes(p.gpuMem) : "—"}
-                  </td>
-                  <td className="ptable__muted">{p.user ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length === 0 && (
-            <EmptyState
-              title={query ? "No matching processes" : "No processes"}
-              detail={query ? "Try a different name or PID." : undefined}
+          <div className="toolbar-row" style={{ padding: "0 12px 8px" }}>
+            <input
+              ref={searchRef}
+              className="search"
+              placeholder="Search by name or PID  ·  / or Ctrl+K"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              style={{ flex: "1 1 260px" }}
             />
+            {total > rows.length && !query && (
+              <span className="processes__count">showing first {rows.length}</span>
+            )}
+          </div>
+
+          {snapshot.processes.availability.state !== "ok" ? (
+            <EmptyState
+              title={availabilityLabel(snapshot.processes.availability)}
+              detail={availabilityDetail(snapshot.processes.availability)}
+            />
+          ) : (
+            <div
+              className="ptable-wrap"
+              style={{ border: "none", maxHeight: "calc(100vh - 300px)" }}
+              tabIndex={0}
+              onKeyDown={onKeyDown}
+              role="region"
+              aria-label="Process list"
+            >
+              <table className="ptable">
+                <thead>
+                  <tr>
+                    <SortableHeader k="pid" label="PID" sortKey={sortKey} sortDir={sortDir} setSort={setSort} numeric />
+                    <SortableHeader k="name" label="Process" sortKey={sortKey} sortDir={sortDir} setSort={setSort} />
+                    <SortableHeader k="cpu" label="CPU" sortKey={sortKey} sortDir={sortDir} setSort={setSort} numeric />
+                    <SortableHeader k="memory" label="Memory" sortKey={sortKey} sortDir={sortDir} setSort={setSort} numeric />
+                    <th className="ptable__num">GPU %</th>
+                    <th className="ptable__num">GPU mem</th>
+                    <th>User</th>
+                    <th>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((p) => {
+                    const alert = alertedPids.get(p.pid);
+                    return (
+                      <tr
+                        key={p.pid}
+                        aria-selected={selectedPid === p.pid}
+                        onClick={() => selectProcess(p.pid)}
+                        onDoubleClick={() => {
+                          const identity = identityOf(p);
+                          if (identity) requestKill(identity, p.name);
+                        }}
+                      >
+                        <td className="ptable__num mono">{p.pid}</td>
+                        <td className="ptable__name" title={p.exe ?? p.name}>
+                          {p.name}
+                        </td>
+                        <td
+                          className="ptable__num"
+                          style={{ color: loadColor(p.cpuPercent) }}
+                        >
+                          {formatPercent(p.cpuPercent)}
+                        </td>
+                        <td className="ptable__num">{formatBytes(p.memory)}</td>
+                        <td className="ptable__num">
+                          {p.gpuPercent != null ? `${p.gpuPercent.toFixed(0)}%` : "—"}
+                        </td>
+                        <td className="ptable__num">
+                          {p.gpuMem != null ? formatBytes(p.gpuMem) : "—"}
+                        </td>
+                        <td className="ptable__muted">{p.user ?? "—"}</td>
+                        <td>
+                          {alert ? (
+                            <span className="pill is-warn" title={alert}>
+                              flagged
+                            </span>
+                          ) : (
+                            <span className="is-faint">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {rows.length === 0 && (
+                <EmptyState
+                  title={query ? "No matching processes" : "No processes"}
+                  detail={query ? "Try a different name or PID." : undefined}
+                />
+              )}
+            </div>
           )}
-        </div>
+        </Panel>
+
         {selected && (
           <ProcessDetails
             process={selected}
+            alert={alertedPids.get(selected.pid)}
             onKill={() => {
               const identity = identityOf(selected);
               if (identity) requestKill(identity, selected.name);
@@ -178,77 +245,119 @@ function SortableHeader({
   sortKey,
   sortDir,
   setSort,
+  numeric,
 }: {
   k: ProcessSortKey;
   label: string;
   sortKey: ProcessSortKey;
   sortDir: "asc" | "desc";
   setSort: (k: ProcessSortKey) => void;
+  numeric?: boolean;
 }) {
   const active = sortKey === k;
-  const arrow = active ? (sortDir === "asc" ? "▲" : "▼") : "";
   return (
     <th
-      className={`ptable__sort${active ? " ptable__sort--active" : ""}`}
-      onClick={() => setSort(k)}
+      className={numeric ? "ptable__num" : undefined}
+      aria-sort={
+        active ? (sortDir === "asc" ? "ascending" : "descending") : "none"
+      }
     >
-      {label} <span className="ptable__arrow">{arrow}</span>
+      <button
+        className="ptable__sort"
+        onClick={() => setSort(k)}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        <span className="ptable__arrow" aria-hidden="true">
+          {active ? (sortDir === "asc" ? "▲" : "▼") : ""}
+        </span>
+      </button>
     </th>
   );
 }
 
 function ProcessDetails({
   process,
+  alert,
   onKill,
   onClose,
 }: {
   process: ProcessSnapshot;
+  alert?: string;
   onKill: () => void;
   onClose: () => void;
 }) {
+  const killable = identityOf(process) != null;
   return (
-    <aside className="details">
-      <header className="details__header">
-        <span className="details__name" title={process.exe ?? process.name}>
-          {process.name}
-        </span>
-        <button className="icon-button" onClick={onClose} title="Close details">
-          ×
-        </button>
-      </header>
-      <dl className="details__list">
-        <Detail label="PID" value={String(process.pid)} mono />
-        <Detail label="CPU" value={formatPercent(process.cpuPercent)} mono />
-        <Detail label="Memory" value={formatBytes(process.memory)} mono />
-        <Detail label="GPU memory" value={process.gpuMem != null ? formatBytes(process.gpuMem) : "—"} mono />
-        <Detail label="User" value={process.user ?? "—"} />
-        <Detail label="Executable" value={process.exe ?? "Access denied"} />
-      </dl>
-      <button
-        className="button button--danger button--block"
-        onClick={onKill}
-        disabled={identityOf(process) == null}
-        title={identityOf(process) == null ? "Process identity unavailable" : undefined}
-      >
-        End process
-      </button>
-    </aside>
-  );
-}
+    <Panel title="Process Detail">
+      <div className="details">
+        <header className="details__header">
+          <span className="details__name" title={process.exe ?? process.name}>
+            {process.name}
+          </span>
+          <button className="icon-button" onClick={onClose} title="Close details">
+            ×
+          </button>
+        </header>
 
-function Detail({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd className={mono ? "mono" : ""}>{value}</dd>
-    </>
+        {alert && (
+          <div className="alert alert--warning">
+            <div className="alert__body">
+              <div className="alert__detail">{alert}</div>
+            </div>
+          </div>
+        )}
+
+        <div className="kv">
+          <span>PID</span>
+          <span>{process.pid}</span>
+          <span>CPU</span>
+          <span style={{ color: loadColor(process.cpuPercent) }}>
+            {formatPercent(process.cpuPercent)}
+          </span>
+          <span>Memory</span>
+          <span>{formatBytes(process.memory)}</span>
+          <span>GPU util</span>
+          <span>
+            {process.gpuPercent != null ? `${process.gpuPercent.toFixed(0)}%` : "—"}
+          </span>
+          <span>GPU memory</span>
+          <span>
+            {process.gpuMem != null ? formatBytes(process.gpuMem) : "—"}
+          </span>
+          <span>User</span>
+          <span>{process.user ?? "—"}</span>
+          <span>Started</span>
+          <span>
+            {process.startedAt != null
+              ? new Date(process.startedAt).toLocaleString()
+              : "—"}
+          </span>
+        </div>
+
+        <div>
+          <span className="label">Executable</span>
+          <p
+            className="settings__hint mono"
+            style={{ margin: "4px 0 0", wordBreak: "break-all" }}
+          >
+            {process.exe ?? "Access denied"}
+          </p>
+        </div>
+
+        <button
+          className="button button--danger button--block"
+          onClick={onKill}
+          disabled={!killable}
+          title={
+            killable
+              ? "Terminate this exact process (identity revalidated first)"
+              : "Process identity unavailable — cannot terminate safely"
+          }
+        >
+          End process
+        </button>
+      </div>
+    </Panel>
   );
 }

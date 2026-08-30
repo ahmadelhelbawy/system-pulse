@@ -1,26 +1,13 @@
 import { useEffect, useState } from "react";
-import type {
-  DiagnosticFinding,
-  HealthAlert,
-  PersistenceFinding,
-  Sampled,
-} from "../lib/contracts";
+import type { Sampled } from "../lib/contracts";
 import { api } from "../lib/ipc";
 import { availabilityDetail, availabilityLabel } from "../lib/availability";
+import { formatBytes } from "../lib/format";
 import { useStore } from "../state/store";
+import Panel from "./common/Panel";
 import EmptyState from "./common/EmptyState";
 
-type SubTab =
-  | "services"
-  | "drivers"
-  | "startup"
-  | "software"
-  | "tasks"
-  | "storage"
-  | "sensors"
-  | "events"
-  | "security"
-  | "diagnostics";
+type SubTab = "services" | "drivers" | "startup" | "software" | "tasks";
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "services", label: "Services" },
@@ -28,64 +15,119 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "startup", label: "Startup" },
   { id: "software", label: "Software" },
   { id: "tasks", label: "Tasks" },
-  { id: "storage", label: "Storage" },
-  { id: "sensors", label: "Sensors" },
-  { id: "events", label: "Events" },
-  { id: "security", label: "Security" },
-  { id: "diagnostics", label: "Diagnostics" },
 ];
 
 /**
- * All Phase 3 system-inventory lists in one screen, per the master plan's
- * "System" screen (services, drivers, startup, scheduled tasks, installed
- * software). Every list is Cold-cadence and fetched on demand, the same
- * shape as `NetworkPanel`/`HardwarePanel` — no polling, since this data
- * changes rarely and a manual refresh is enough (see `Refresh` below).
+ * Phase 3 system inventory (services, drivers, startup, scheduled tasks,
+ * installed software) plus the `GetPerformanceInfo` internal-state
+ * readouts. Storage, sensors, events, security and diagnostics each became
+ * their own rail destination in Phase 6 — this screen is the inventory
+ * tables only. Every list is Cold-cadence and fetched on demand.
  */
 export default function SystemPanel() {
   const [tab, setTab] = useState<SubTab>("services");
   const [query, setQuery] = useState("");
+  const wi = useStore((s) => s.snapshot?.windowsInternal);
 
   return (
-    <div className="system">
-      <div className="system__toolbar">
-        <nav className="system__group" role="tablist" aria-label="System inventory">
-          {SUB_TABS.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={t.id === tab}
-              className={`tab${t.id === tab ? " tab--active" : ""}`}
-              onClick={() => {
-                setTab(t.id);
-                setQuery("");
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <input
-          className="search"
-          placeholder="Filter…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          spellCheck={false}
-          autoComplete="off"
+    <div className="screen">
+      <h1 className="screen__heading">System Inventory</h1>
+
+      <div className="grid grid--tight">
+        <Stat label="Handles" value={wi?.value?.handleCount} />
+        <Stat label="Threads" value={wi?.value?.threadCount} />
+        <Stat label="Processes" value={wi?.value?.processCount} />
+        <Stat
+          label="Commit"
+          text={
+            wi?.value
+              ? `${formatBytes(wi.value.commitTotal)}`
+              : undefined
+          }
+          sub={
+            wi?.value ? `of ${formatBytes(wi.value.commitLimit)}` : undefined
+          }
+        />
+        <Stat
+          label="Paged Pool"
+          text={wi?.value ? formatBytes(wi.value.kernelPagedPool) : undefined}
+        />
+        <Stat
+          label="Non-Paged"
+          text={wi?.value ? formatBytes(wi.value.kernelNonPagedPool) : undefined}
+        />
+        <Stat
+          label="System Cache"
+          text={wi?.value ? formatBytes(wi.value.systemCache) : undefined}
         />
       </div>
 
-      {tab === "services" && <ServicesTable query={query} />}
-      {tab === "drivers" && <DriversTable query={query} />}
-      {tab === "startup" && <StartupTable query={query} />}
-      {tab === "software" && <SoftwareTable query={query} />}
-      {tab === "tasks" && <TasksTable query={query} />}
-      {tab === "storage" && <StorageTable query={query} />}
-      {tab === "sensors" && <SensorsTable />}
-      {tab === "events" && <EventsTable query={query} />}
-      {tab === "security" && <SecurityTab />}
-      {tab === "diagnostics" && <DiagnosticsTab />}
+      <Panel title="Inventory" sub="// cold cadence" flush>
+        <div className="toolbar-row" style={{ padding: "0 12px" }}>
+          <nav className="tabs" role="tablist" aria-label="System inventory">
+            {SUB_TABS.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={t.id === tab}
+                className={`tab${t.id === tab ? " tab--active" : ""}`}
+                onClick={() => {
+                  setTab(t.id);
+                  setQuery("");
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+          <span className="toolbar-row__spacer" />
+          <input
+            className="search"
+            placeholder="Filter…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+            style={{ margin: "0 12px 8px" }}
+          />
+        </div>
+
+        {tab === "services" && <ServicesTable query={query} />}
+        {tab === "drivers" && <DriversTable query={query} />}
+        {tab === "startup" && <StartupTable query={query} />}
+        {tab === "software" && <SoftwareTable query={query} />}
+        {tab === "tasks" && <TasksTable query={query} />}
+      </Panel>
     </div>
+  );
+}
+
+/** A single internal-state readout. `undefined` renders "—", never 0. */
+function Stat({
+  label,
+  value,
+  text,
+  sub,
+}: {
+  label: string;
+  value?: number;
+  text?: string;
+  sub?: string;
+}) {
+  const display = text ?? (value != null ? value.toLocaleString() : "—");
+  return (
+    <Panel title={label}>
+      <div className="readout">
+        <span
+          className={`readout__value readout__value--sm${
+            display === "—" ? " is-faint" : ""
+          }`}
+        >
+          {display}
+        </span>
+        {sub && <span className="readout__sub">{sub}</span>}
+      </div>
+    </Panel>
   );
 }
 
@@ -94,28 +136,6 @@ export default function SystemPanel() {
  * than one tab-switch stale. */
 function useOnDemand<T>(fetcher: () => Promise<Sampled<T[]> | null>) {
   const [sampled, setSampled] = useState<Sampled<T[]> | null | "loading">("loading");
-
-  useEffect(() => {
-    let cancelled = false;
-    setSampled("loading");
-    fetcher()
-      .then((s) => {
-        if (!cancelled) setSampled(s);
-      })
-      .catch((e) => console.error("system inventory fetch failed", e));
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return sampled;
-}
-
-/** Same shape as `useOnDemand`, for a single-value `Sampled<T>` result
- * (the sensor bridge reports one snapshot, not a list). */
-function useOnDemandSingle<T>(fetcher: () => Promise<Sampled<T> | null>) {
-  const [sampled, setSampled] = useState<Sampled<T> | null | "loading">("loading");
 
   useEffect(() => {
     let cancelled = false;
@@ -359,321 +379,6 @@ function TasksTable({ query }: { query: string }) {
         </tbody>
       </table>
       {rows.length === 0 && <EmptyState title="No matching tasks" />}
-    </div>
-  );
-}
-
-function StorageTable({ query }: { query: string }) {
-  const sampled = useOnDemand(api.getStorageHealth);
-  if (sampled === "loading") return <EmptyState title="Loading storage health…" />;
-  if (sampled == null) return <EmptyState title="No data yet" />;
-  if (sampled.availability.state !== "ok" || !sampled.value) {
-    return (
-      <EmptyState
-        title={availabilityLabel(sampled.availability)}
-        detail={
-          availabilityDetail(sampled.availability) ??
-          "SMART/NVMe health requires an elevated process — see Settings."
-        }
-      />
-    );
-  }
-  const rows = filterRows(sampled.value, query, (r, q) =>
-    r.device.toLowerCase().includes(q) || (r.model ?? "").toLowerCase().includes(q),
-  );
-  return (
-    <div className="ptable-wrap">
-      <table className="ptable">
-        <thead>
-          <tr>
-            <th>Device</th>
-            <th>Model</th>
-            <th>Bus</th>
-            <th className="ptable__num">Size</th>
-            <th className="ptable__num">Temp</th>
-            <th>Health</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.device}>
-              <td className="ptable__name" title={r.device}>
-                {r.model ?? r.device}
-              </td>
-              <td className="ptable__muted">{r.model ?? "—"}</td>
-              <td className="ptable__muted">{r.busType ?? "—"}</td>
-              <td className="mono">
-                {r.sizeBytes != null ? `${(r.sizeBytes / 1e9).toFixed(0)} GB` : "—"}
-              </td>
-              <td className="mono">{r.temperatureC != null ? `${r.temperatureC}°C` : "—"}</td>
-              <td className="ptable__muted">
-                {r.predictedFailure == null
-                  ? "Unavailable"
-                  : r.predictedFailure
-                    ? "Failure predicted"
-                    : "OK"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && <EmptyState title="No matching drives" />}
-    </div>
-  );
-}
-
-function SensorsTable() {
-  const sampled = useOnDemandSingle(api.getSensorBridge);
-  if (sampled === "loading") return <EmptyState title="Loading sensors…" />;
-  if (sampled == null) return <EmptyState title="No data yet" />;
-  if (sampled.availability.state !== "ok" || !sampled.value) {
-    return (
-      <EmptyState
-        title={availabilityLabel(sampled.availability)}
-        detail={
-          availabilityDetail(sampled.availability) ??
-          "No supported sensor bridge (LibreHardwareMonitor) is currently running."
-        }
-      />
-    );
-  }
-  const { source, readings } = sampled.value;
-  if (readings.length === 0) {
-    return <EmptyState title="No sensors reported" detail={source ?? undefined} />;
-  }
-  return (
-    <div className="ptable-wrap">
-      {source && <p className="ptable__muted">Source: {source}</p>}
-      <table className="ptable">
-        <thead>
-          <tr>
-            <th>Sensor</th>
-            <th>Type</th>
-            <th className="ptable__num">Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {readings.map((r, i) => (
-            <tr key={`${r.name}-${i}`}>
-              <td className="ptable__name">{r.name}</td>
-              <td className="ptable__muted">{r.kind}</td>
-              <td className="mono">{r.value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function EventsTable({ query }: { query: string }) {
-  const sampled = useOnDemandSingle(api.getEventLog);
-  if (sampled === "loading") return <EmptyState title="Loading event log…" />;
-  if (sampled == null) return <EmptyState title="No data yet" />;
-  if (sampled.availability.state !== "ok" || !sampled.value) {
-    return (
-      <EmptyState
-        title={availabilityLabel(sampled.availability)}
-        detail={availabilityDetail(sampled.availability)}
-      />
-    );
-  }
-  const { entries, dropped, securityIncluded } = sampled.value;
-  const rows = filterRows(
-    entries,
-    query,
-    (r, q) =>
-      r.provider.toLowerCase().includes(q) ||
-      (r.message ?? "").toLowerCase().includes(q) ||
-      r.channel.toLowerCase().includes(q),
-  );
-  return (
-    <div className="ptable-wrap">
-      <p className="ptable__muted">
-        {securityIncluded
-          ? "Security channel included (elevated)."
-          : "Security channel not included — restart elevated to include it."}
-        {dropped > 0 && ` ${dropped} older event(s) dropped from this in-memory window.`}
-      </p>
-      <table className="ptable">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Channel</th>
-            <th>Level</th>
-            <th>Provider</th>
-            <th className="ptable__num">ID</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows
-            .slice()
-            .reverse()
-            .map((r, i) => (
-              <tr key={`${r.channel}-${r.recordId}-${i}`}>
-                <td className="ptable__muted">{new Date(r.timeCreated).toLocaleString()}</td>
-                <td className="ptable__muted">{r.channel}</td>
-                <td className="mono">{r.level}</td>
-                <td className="ptable__name">{r.provider}</td>
-                <td className="mono">{r.eventId}</td>
-                <td className="ptable__muted" title={r.message ?? undefined}>
-                  {r.message ? r.message.split("\n")[0] : "—"}
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && <EmptyState title="No matching events" />}
-    </div>
-  );
-}
-
-function SecurityTab() {
-  const posture = useOnDemandSingle(api.getSecurityPosture);
-  const [findings, setFindings] = useState<PersistenceFinding[] | "loading">("loading");
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getPersistenceFindings()
-      .then((f) => {
-        if (!cancelled) setFindings(f);
-      })
-      .catch((e) => console.error("persistence findings fetch failed", e));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (posture === "loading") return <EmptyState title="Loading security posture…" />;
-  if (posture == null) return <EmptyState title="No data yet" />;
-  if (posture.availability.state !== "ok" || !posture.value) {
-    return (
-      <EmptyState
-        title={availabilityLabel(posture.availability)}
-        detail={availabilityDetail(posture.availability)}
-      />
-    );
-  }
-  const { firewall, antivirus, secureBootEnabled } = posture.value;
-
-  return (
-    <div className="ptable-wrap">
-      <table className="ptable">
-        <thead>
-          <tr>
-            <th>Check</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td className="ptable__name">Firewall — Domain</td>
-            <td className="mono">{firewall?.domain ?? "—"}</td>
-          </tr>
-          <tr>
-            <td className="ptable__name">Firewall — Private</td>
-            <td className="mono">{firewall?.private ?? "—"}</td>
-          </tr>
-          <tr>
-            <td className="ptable__name">Firewall — Public</td>
-            <td className="mono">{firewall?.public ?? "—"}</td>
-          </tr>
-          {antivirus.map((a, i) => (
-            <tr key={`${a.kind}-${i}`}>
-              <td className="ptable__name">{a.kind}</td>
-              <td className="mono">{a.health}</td>
-            </tr>
-          ))}
-          <tr>
-            <td className="ptable__name">Secure Boot</td>
-            <td className="mono">
-              {secureBootEnabled == null ? "N/A" : secureBootEnabled ? "Enabled" : "Disabled"}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <p className="ptable__muted" style={{ marginTop: "1rem" }}>
-        Persistence checks (startup entries, scheduled tasks)
-      </p>
-      {findings === "loading" && <EmptyState title="Checking persistence entries…" />}
-      {findings !== "loading" && findings.length === 0 && (
-        <EmptyState title="No suspicious persistence entries found" />
-      )}
-      {findings !== "loading" && findings.length > 0 && (
-        <table className="ptable">
-          <thead>
-            <tr>
-              <th>Finding</th>
-              <th>Detail</th>
-              <th>Signed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {findings.map((f) => (
-              <tr key={f.id}>
-                <td className="ptable__name">{f.title}</td>
-                <td className="ptable__muted">{f.detail}</td>
-                <td className="mono">
-                  {f.signed == null ? "Unknown" : f.signed ? "Yes" : "No"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
-function DiagnosticsTab() {
-  const snapshot = useStore((s) => s.snapshot);
-  const [findings, setFindings] = useState<DiagnosticFinding[] | "loading">("loading");
-
-  useEffect(() => {
-    if (!snapshot) return;
-    const alerts: HealthAlert[] = [...snapshot.health.alerts, ...snapshot.anomalies];
-    api
-      .getDiagnostics(alerts)
-      .then(setFindings)
-      .catch((e) => console.error("diagnostics fetch failed", e));
-    // Only re-run when the panel mounts with a snapshot, not on every 1Hz
-    // tick — this is an on-demand correlation, not a live subscription.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot != null]);
-
-  if (!snapshot) return <EmptyState title="Waiting for telemetry…" />;
-  if (findings === "loading") return <EmptyState title="Correlating active alerts…" />;
-  if (findings.length === 0) {
-    return <EmptyState title="No active alerts to correlate" />;
-  }
-
-  return (
-    <div className="ptable-wrap">
-      <table className="ptable">
-        <thead>
-          <tr>
-            <th>Finding</th>
-            <th>Detail</th>
-            <th className="ptable__num">Duration</th>
-            <th className="ptable__num">Evidence points</th>
-          </tr>
-        </thead>
-        <tbody>
-          {findings.map((f) => (
-            <tr key={f.id}>
-              <td className="ptable__name">{f.title}</td>
-              <td className="ptable__muted">{f.detail}</td>
-              <td className="mono">
-                {f.durationMs > 0 ? `${Math.round(f.durationMs / 1000)}s` : "—"}
-              </td>
-              <td className="mono">{f.evidence.length}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

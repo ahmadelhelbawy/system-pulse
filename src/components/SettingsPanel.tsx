@@ -3,6 +3,7 @@ import type { Settings } from "../lib/contracts";
 import { hotkeyFromEvent } from "../lib/hotkey";
 import { api } from "../lib/ipc";
 import { useStore } from "../state/store";
+import Panel from "./common/Panel";
 
 const INTERVALS = [500, 1000, 2000, 3000, 5000];
 
@@ -50,12 +51,9 @@ export default function SettingsPanel() {
 
   return (
     <div className="settings">
-      <h2 className="settings__heading">Settings</h2>
+      <h1 className="screen__heading">Settings</h1>
 
-      <section className="card">
-        <header className="card__header">
-          <span className="card__title">Global hotkey</span>
-        </header>
+      <Panel title="Global Hotkey">
         <div className="settings__row">
           <button
             className={`hotkey-button${recording ? " hotkey-button--recording" : ""}`}
@@ -69,12 +67,9 @@ export default function SettingsPanel() {
               : "Toggle System Pulse from any application."}
           </span>
         </div>
-      </section>
+      </Panel>
 
-      <section className="card">
-        <header className="card__header">
-          <span className="card__title">Behavior</span>
-        </header>
+      <Panel title="Behavior">
         <Toggle
           label="Launch at Windows startup"
           hint="Runs quietly in the tray at login."
@@ -93,12 +88,9 @@ export default function SettingsPanel() {
           checked={settings.compactMode}
           onChange={(v) => update({ compactMode: v })}
         />
-      </section>
+      </Panel>
 
-      <section className="card">
-        <header className="card__header">
-          <span className="card__title">Refresh interval</span>
-        </header>
+      <Panel title="Refresh Interval">
         <div className="settings__row">
           <select
             className="select"
@@ -115,12 +107,9 @@ export default function SettingsPanel() {
             Lower values update faster but use slightly more CPU.
           </span>
         </div>
-      </section>
+      </Panel>
 
-      <section className="card">
-        <header className="card__header">
-          <span className="card__title">System</span>
-        </header>
+      <Panel title="Session &amp; Privilege">
         <div className="settings__row">
           <span className="settings__hint">
             Privilege level:{" "}
@@ -151,7 +140,7 @@ export default function SettingsPanel() {
             Quit System Pulse
           </button>
         </div>
-      </section>
+      </Panel>
 
       {error && <p className="settings__error">{error}</p>}
     </div>

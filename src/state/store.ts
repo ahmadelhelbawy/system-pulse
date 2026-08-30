@@ -22,13 +22,16 @@ import { DEFAULT_SETTINGS } from "../lib/contracts";
 
 export type Tab =
   | "overview"
-  | "processes"
-  | "gpu"
-  | "network"
   | "hardware"
-  | "health"
-  | "trends"
+  | "thermals"
+  | "processes"
+  | "network"
+  | "storage"
   | "system"
+  | "security"
+  | "events"
+  | "trends"
+  | "diagnostics"
   | "settings";
 
 export type ProcessSortKey = "cpu" | "memory" | "name" | "pid";
@@ -49,7 +52,14 @@ interface ConfirmKill {
 // series can be added (Phase 1B: disk/network/gpu) without touching the
 // `Store` interface.
 
-export type SeriesId = "cpu" | "memory";
+export type SeriesId =
+  | "cpu"
+  | "memory"
+  | "gpu"
+  | "diskRead"
+  | "diskWrite"
+  | "netDown"
+  | "netUp";
 
 const SERIES_WINDOW_MS = 60_000;
 
@@ -60,7 +70,15 @@ export interface SeriesPoint {
 
 export type SeriesRegistry = Readonly<Record<SeriesId, readonly SeriesPoint[]>>;
 
-const EMPTY_SERIES: SeriesRegistry = { cpu: [], memory: [] };
+const EMPTY_SERIES: SeriesRegistry = {
+  cpu: [],
+  memory: [],
+  gpu: [],
+  diskRead: [],
+  diskWrite: [],
+  netDown: [],
+  netUp: [],
+};
 
 function pushSeries(
   series: SeriesRegistry,
@@ -128,17 +146,40 @@ const createTelemetrySlice = (
   systemInfo: null,
   series: EMPTY_SERIES,
   setSnapshot: (snapshot) =>
-    set((s) => ({
-      snapshot,
-      series: pushSeries(
-        s.series,
-        {
-          cpu: snapshot.cpu.value?.totalPercent,
-          memory: snapshot.memory.value?.usedPercent,
-        },
-        snapshot.timestampMs,
-      ),
-    })),
+    set((s) => {
+      // Every series is `undefined` (skipped by `pushSeries`) rather than 0
+      // whenever its source `Sampled` isn't `ok` — a gap in a sparkline is
+      // honest; a flat zero line would be fabricated telemetry.
+      const gpus = snapshot.gpu.value;
+      const gpuAvg =
+        gpus && gpus.length > 0
+          ? (() => {
+              const readings = gpus
+                .map((g) => g.utilizationPercent)
+                .filter((v): v is number => v != null);
+              return readings.length > 0
+                ? readings.reduce((a, b) => a + b, 0) / readings.length
+                : undefined;
+            })()
+          : undefined;
+      const nets = snapshot.networks.value;
+      return {
+        snapshot,
+        series: pushSeries(
+          s.series,
+          {
+            cpu: snapshot.cpu.value?.totalPercent,
+            memory: snapshot.memory.value?.usedPercent,
+            gpu: gpuAvg,
+            diskRead: snapshot.diskIo.value?.readRate,
+            diskWrite: snapshot.diskIo.value?.writeRate,
+            netDown: nets?.reduce((a, n) => a + n.downloadRate, 0),
+            netUp: nets?.reduce((a, n) => a + n.uploadRate, 0),
+          },
+          snapshot.timestampMs,
+        ),
+      };
+    }),
   setSystemInfo: (systemInfo) => set(() => ({ systemInfo })),
 });
 
