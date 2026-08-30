@@ -9,6 +9,7 @@ import NetworkPanel from "./components/NetworkPanel";
 import HardwarePanel from "./components/HardwarePanel";
 import HealthPanel from "./components/HealthPanel";
 import TrendsPanel from "./components/TrendsPanel";
+import SystemPanel from "./components/SystemPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusBar from "./components/StatusBar";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -136,6 +137,11 @@ export default function App() {
         {tab === "trends" && (
           <ErrorBoundary label="Trends">
             <TrendsPanel />
+          </ErrorBoundary>
+        )}
+        {tab === "system" && (
+          <ErrorBoundary label="System">
+            <SystemPanel />
           </ErrorBoundary>
         )}
         {tab === "settings" && (

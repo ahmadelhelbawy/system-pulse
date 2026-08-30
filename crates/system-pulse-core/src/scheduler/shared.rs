@@ -16,8 +16,9 @@ use parking_lot::Mutex;
 
 use crate::model::Sampled;
 use crate::types::{
-    ConnectionSnapshot, DiskIoSnapshot, DiskSnapshot, GpuSnapshot, NetworkSnapshot,
-    ProcessSnapshot, SmbiosInfo, WindowsInternalState,
+    ConnectionSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, GpuSnapshot,
+    InstalledSoftware, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot, ServiceSnapshot,
+    SmbiosInfo, StartupItem, WindowsInternalState,
 };
 
 #[derive(Default)]
@@ -43,6 +44,12 @@ pub(crate) struct LatestSections {
     /// Device-level GPU stats from PDH, used only when NVML (`gpu` above)
     /// is unavailable — see `CollectorOutput::PdhGpu`'s doc comment.
     pub gpu_device_fallback: Option<Sampled<Vec<GpuSnapshot>>>,
+    // --- Phase 3: all on-demand, none folded into the hot frame ---
+    pub services: Option<Sampled<Vec<ServiceSnapshot>>>,
+    pub drivers: Option<Sampled<Vec<DriverSnapshot>>>,
+    pub startup: Option<Sampled<Vec<StartupItem>>>,
+    pub installed_software: Option<Sampled<Vec<InstalledSoftware>>>,
+    pub scheduled_tasks: Option<Sampled<Vec<ScheduledTaskSnapshot>>>,
 }
 
 pub(crate) type SharedSections = std::sync::Arc<Mutex<LatestSections>>;

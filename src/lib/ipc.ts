@@ -8,12 +8,17 @@ import type {
   AppError,
   CollectorCapability,
   ConnectionSnapshot,
+  DriverSnapshot,
   HistoryPoint,
+  InstalledSoftware,
   ProcessIdentity,
   Sampled,
+  ScheduledTaskSnapshot,
+  ServiceSnapshot,
   Settings,
   SeriesId,
   SmbiosInfo,
+  StartupItem,
   SystemInfo,
   TelemetrySnapshot,
   TimeRange,
@@ -43,6 +48,15 @@ export const api = {
     invoke<Sampled<SmbiosInfo> | null>("get_hardware_info"),
   queryHistory: (range: TimeRange, series: SeriesId) =>
     invoke<HistoryPoint[]>("query_history", { range, series }),
+  // Phase 3: on-demand reads of Cold-cadence system inventory, same
+  // never-fabricated-empty-result shape as getConnections/getHardwareInfo.
+  getServices: () => invoke<Sampled<ServiceSnapshot[]> | null>("get_services"),
+  getDrivers: () => invoke<Sampled<DriverSnapshot[]> | null>("get_drivers"),
+  getStartup: () => invoke<Sampled<StartupItem[]> | null>("get_startup"),
+  getInstalledSoftware: () =>
+    invoke<Sampled<InstalledSoftware[]> | null>("get_installed_software"),
+  getScheduledTasks: () =>
+    invoke<Sampled<ScheduledTaskSnapshot[]> | null>("get_scheduled_tasks"),
   quit: () => invoke<void>("quit"),
 };
 

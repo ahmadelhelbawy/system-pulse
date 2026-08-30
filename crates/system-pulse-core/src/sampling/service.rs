@@ -17,7 +17,10 @@ use std::time::Duration;
 use crate::collector::Collector;
 use crate::model::Sampled;
 use crate::scheduler::Scheduler;
-use crate::types::{ConnectionSnapshot, SmbiosInfo, SystemInfo, TelemetrySnapshot};
+use crate::types::{
+    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot, ServiceSnapshot,
+    SmbiosInfo, StartupItem, SystemInfo, TelemetrySnapshot,
+};
 
 /// A sink cannot keep up with the current frame rate; the frame is dropped
 /// (the next one will coalesce over it in the mailbox regardless).
@@ -72,6 +75,26 @@ impl TelemetryService {
     /// `Scheduler::latest_hardware`.
     pub fn latest_hardware(&self) -> Option<Sampled<SmbiosInfo>> {
         self.scheduler.latest_hardware()
+    }
+
+    pub fn latest_services(&self) -> Option<Sampled<Vec<ServiceSnapshot>>> {
+        self.scheduler.latest_services()
+    }
+
+    pub fn latest_drivers(&self) -> Option<Sampled<Vec<DriverSnapshot>>> {
+        self.scheduler.latest_drivers()
+    }
+
+    pub fn latest_startup(&self) -> Option<Sampled<Vec<StartupItem>>> {
+        self.scheduler.latest_startup()
+    }
+
+    pub fn latest_installed_software(&self) -> Option<Sampled<Vec<InstalledSoftware>>> {
+        self.scheduler.latest_installed_software()
+    }
+
+    pub fn latest_scheduled_tasks(&self) -> Option<Sampled<Vec<ScheduledTaskSnapshot>>> {
+        self.scheduler.latest_scheduled_tasks()
     }
 
     /// Queries recorded history — see `Scheduler::query_history`.

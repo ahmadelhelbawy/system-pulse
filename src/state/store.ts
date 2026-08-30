@@ -28,6 +28,7 @@ export type Tab =
   | "hardware"
   | "health"
   | "trends"
+  | "system"
   | "settings";
 
 export type ProcessSortKey = "cpu" | "memory" | "name" | "pid";

@@ -30,8 +30,9 @@ use ts_rs::TS;
 use crate::model::UnixMillis;
 use crate::model::{Availability, Sampled};
 use crate::types::{
-    ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, GpuSnapshot, MemorySnapshot,
-    NetworkSnapshot, ProcessSnapshot, SmbiosInfo, WindowsInternalState,
+    ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, GpuSnapshot,
+    InstalledSoftware, MemorySnapshot, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot,
+    ServiceSnapshot, SmbiosInfo, StartupItem, WindowsInternalState,
 };
 
 /// Identifies a collector for scheduling, logging, and capability reports.
@@ -49,6 +50,11 @@ pub enum CollectorId {
     Connections,
     Hardware,
     PdhGpu,
+    Services,
+    Drivers,
+    Startup,
+    InstalledSoftware,
+    ScheduledTasks,
 }
 
 /// How often a collector should run, and on which thread.
@@ -124,6 +130,24 @@ pub enum CollectorOutput {
         per_process_percent: HashMap<u32, f32>,
         device_fallback: Option<Sampled<Vec<GpuSnapshot>>>,
     },
+    /// SCM (`OpenSCManagerW`/`EnumServicesStatusExW`, Phase 3) — implemented
+    /// in `system-pulse-win`. No COM. Cold/on-demand, like `Connections`.
+    Services(Sampled<Vec<ServiceSnapshot>>),
+    /// `EnumDeviceDrivers` + SetupAPI (Phase 3) — implemented in
+    /// `system-pulse-win`. No COM.
+    Drivers(Sampled<Vec<DriverSnapshot>>),
+    /// Run/RunOnce keys + Startup folders + `StartupApproved` (Phase 3) —
+    /// implemented in `system-pulse-win`. No COM.
+    Startup(Sampled<Vec<StartupItem>>),
+    /// Uninstall registry keys, HKLM+HKCU+WOW6432Node (Phase 3) —
+    /// implemented in `system-pulse-win`. No COM; never `Win32_Product`.
+    InstalledSoftware(Sampled<Vec<InstalledSoftware>>),
+    /// Task Scheduler 2.0 COM (Phase 3) — implemented in
+    /// `system-pulse-win`, gated on the COM/WebView2 spike's finding (see
+    /// `system-pulse-win::com_spike`): safe from a dedicated MTA worker
+    /// thread with `CoSetProxyBlanket` per proxy, no process-wide COM
+    /// security call.
+    ScheduledTasks(Sampled<Vec<ScheduledTaskSnapshot>>),
 }
 
 /// A pluggable source of telemetry.

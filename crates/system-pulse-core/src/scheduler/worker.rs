@@ -151,6 +151,21 @@ fn publish(sections: &SharedSections, output: CollectorOutput) {
             sections.gpu_process_percent = per_process_percent;
             sections.gpu_device_fallback = device_fallback;
         }
+        CollectorOutput::Services(s) => {
+            sections.services = Some(s);
+        }
+        CollectorOutput::Drivers(d) => {
+            sections.drivers = Some(d);
+        }
+        CollectorOutput::Startup(s) => {
+            sections.startup = Some(s);
+        }
+        CollectorOutput::InstalledSoftware(s) => {
+            sections.installed_software = Some(s);
+        }
+        CollectorOutput::ScheduledTasks(t) => {
+            sections.scheduled_tasks = Some(t);
+        }
         // Hot-only outputs never originate from a worker loop.
         CollectorOutput::Cpu(_) | CollectorOutput::Memory(_) => {}
     }

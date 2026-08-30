@@ -63,6 +63,11 @@ pub fn run() {
             ipc::get_connections,
             ipc::get_hardware_info,
             ipc::query_history,
+            ipc::get_services,
+            ipc::get_drivers,
+            ipc::get_startup,
+            ipc::get_installed_software,
+            ipc::get_scheduled_tasks,
             ipc::quit,
         ])
         .build(tauri::generate_context!())

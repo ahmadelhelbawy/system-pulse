@@ -225,6 +225,36 @@ impl Scheduler {
         self.sections.lock().hardware.clone()
     }
 
+    /// The latest published service list (Phase 3). Same on-demand
+    /// rationale as `latest_connections`/`latest_hardware`.
+    pub fn latest_services(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::ServiceSnapshot>>> {
+        self.sections.lock().services.clone()
+    }
+
+    pub fn latest_drivers(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::DriverSnapshot>>> {
+        self.sections.lock().drivers.clone()
+    }
+
+    pub fn latest_startup(&self) -> Option<crate::model::Sampled<Vec<crate::types::StartupItem>>> {
+        self.sections.lock().startup.clone()
+    }
+
+    pub fn latest_installed_software(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::InstalledSoftware>>> {
+        self.sections.lock().installed_software.clone()
+    }
+
+    pub fn latest_scheduled_tasks(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::ScheduledTaskSnapshot>>> {
+        self.sections.lock().scheduled_tasks.clone()
+    }
+
     /// Queries recorded history. Opens its own short-lived read connection
     /// to the writer's database file rather than sharing the writer's
     /// connection (WAL mode makes this safe — see `crate::history`'s

@@ -320,6 +320,138 @@ pub struct SmbiosInfo {
     pub dimms: Vec<DimmInfo>,
 }
 
+/// `SERVICE_STATUS.dwCurrentState` (Phase 3), from `EnumServicesStatusExW`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ServiceStatus {
+    Stopped,
+    StartPending,
+    StopPending,
+    Running,
+    ContinuePending,
+    PausePending,
+    Paused,
+}
+
+/// A service's configured start type (`QueryServiceConfigW`'s
+/// `dwStartType`) — independent of whether it's currently running.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ServiceStartType {
+    Boot,
+    System,
+    Automatic,
+    Manual,
+    Disabled,
+}
+
+/// One row from the Service Control Manager (`OpenSCManagerW` +
+/// `EnumServicesStatusExW`, Phase 3). No COM. Read-only: starting/stopping
+/// a service needs admin and isn't in scope here (see the plan's A1/A2
+/// capability matrix).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ServiceSnapshot {
+    /// The SCM key name (e.g. `"wuauserv"`), not the display name.
+    pub name: String,
+    pub display_name: String,
+    pub status: ServiceStatus,
+    /// `None` when the per-service config query failed (a transient
+    /// handle/permission issue, distinct from the service itself being
+    /// unenumerable) — the row is still shown with everything else known
+    /// about it real, rather than dropped entirely for one missing field.
+    pub start_type: Option<ServiceStartType>,
+    /// The owning process, when running and the service isn't sharing a
+    /// `svchost.exe` in a way that makes a single pid meaningless — `None`
+    /// covers both "stopped" and "not resolvable."
+    pub pid: Option<u32>,
+}
+
+/// One row from `EnumDeviceDrivers` (psapi) + SetupAPI (Phase 3). Kernel
+/// driver names/base addresses come from the former; the human-readable
+/// description and version, when available, from the latter — never
+/// fabricated when SetupAPI doesn't have a matching entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DriverSnapshot {
+    pub name: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub base_address: u64,
+}
+
+/// Where a startup entry was found (Phase 3) — Run keys, RunOnce keys, and
+/// Startup folders each have distinct semantics worth keeping visible
+/// rather than collapsing into one bag.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StartupLocation {
+    HkcuRun,
+    HklmRun,
+    HkcuRunOnce,
+    HklmRunOnce,
+    UserStartupFolder,
+    CommonStartupFolder,
+}
+
+/// One autostart entry (Phase 3): Run/RunOnce registry keys plus Startup
+/// folder shortcuts, cross-referenced against `StartupApproved` for the
+/// user-facing enabled/disabled state Task Manager's Startup tab shows
+/// (a Run-key entry isn't removed when a user disables it there — a
+/// sibling `StartupApproved` value is flipped instead).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StartupItem {
+    pub name: String,
+    pub command: String,
+    pub location: StartupLocation,
+    pub enabled: bool,
+}
+
+/// One entry from the Uninstall registry (Phase 3: HKLM + HKCU, both the
+/// native and `WOW6432Node` views) — **never** `Win32_Product` (WMI),
+/// which silently triggers an MSI reconfiguration of every installed
+/// package as a side effect of merely enumerating it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InstalledSoftware {
+    pub name: String,
+    pub version: Option<String>,
+    pub publisher: Option<String>,
+    /// Stored verbatim as the registry has it (commonly `YYYYMMDD`, but
+    /// not universally, so this is left as an opaque display string
+    /// rather than parsed into a real date and risking a fabricated one).
+    pub install_date: Option<String>,
+}
+
+/// One task from Task Scheduler 2.0 COM (`ITaskService`, Phase 3) — in
+/// scope per the COM/WebView2 spike's finding (see
+/// `system-pulse-win::com_spike`): safe from a dedicated MTA worker
+/// thread using `CoSetProxyBlanket` per proxy, no process-wide COM
+/// security call. Some tasks are enumerable only when elevated; those are
+/// simply absent from the list rather than causing a global failure (see
+/// the plan's Phase 3 risk note).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ScheduledTaskSnapshot {
+    /// Full path, e.g. `\Microsoft\Windows\Maintenance\WinSAT`.
+    pub path: String,
+    pub enabled: bool,
+    pub last_run_time: Option<UnixMillis>,
+    pub next_run_time: Option<UnixMillis>,
+    /// The last run's HRESULT/exit code, when the task has run at least
+    /// once; `0` means success, matching Task Scheduler's own convention.
+    pub last_task_result: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

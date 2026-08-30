@@ -8,7 +8,10 @@ use system_pulse_core::collector::{probe_capabilities, CollectorCapability};
 use system_pulse_core::history::{HistoryPoint, SeriesId, TimeRange};
 use system_pulse_core::model::Sampled;
 use system_pulse_core::process::{kill_process as core_kill_process, ProcessIdentity};
-use system_pulse_core::types::{ConnectionSnapshot, SmbiosInfo};
+use system_pulse_core::types::{
+    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot, ServiceSnapshot,
+    SmbiosInfo, StartupItem,
+};
 use system_pulse_core::{Settings, SystemInfo};
 use tauri::{AppHandle, State};
 
@@ -114,6 +117,44 @@ pub fn query_history(
         .telemetry
         .query_history(range, series)
         .map_err(AppError::from)
+}
+
+/// Service Control Manager list (Phase 3, Cold cadence) — same on-demand
+/// shape as `get_connections`/`get_hardware_info`.
+#[tauri::command]
+pub fn get_services(state: State<'_, AppState>) -> Option<Sampled<Vec<ServiceSnapshot>>> {
+    state.telemetry.latest_services()
+}
+
+/// Loaded kernel driver list (Phase 3, Cold cadence).
+#[tauri::command]
+pub fn get_drivers(state: State<'_, AppState>) -> Option<Sampled<Vec<DriverSnapshot>>> {
+    state.telemetry.latest_drivers()
+}
+
+/// Autostart entries — Run/RunOnce keys and Startup folders (Phase 3,
+/// Cold cadence).
+#[tauri::command]
+pub fn get_startup(state: State<'_, AppState>) -> Option<Sampled<Vec<StartupItem>>> {
+    state.telemetry.latest_startup()
+}
+
+/// Installed software from the Uninstall registry keys (Phase 3, Cold
+/// cadence).
+#[tauri::command]
+pub fn get_installed_software(
+    state: State<'_, AppState>,
+) -> Option<Sampled<Vec<InstalledSoftware>>> {
+    state.telemetry.latest_installed_software()
+}
+
+/// Task Scheduler entries (Phase 3, Cold cadence) — see
+/// `system_pulse_win::com_spike` for why this is safe to use in-process.
+#[tauri::command]
+pub fn get_scheduled_tasks(
+    state: State<'_, AppState>,
+) -> Option<Sampled<Vec<ScheduledTaskSnapshot>>> {
+    state.telemetry.latest_scheduled_tasks()
 }
 
 #[tauri::command]
