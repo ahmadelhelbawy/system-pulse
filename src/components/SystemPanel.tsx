@@ -4,7 +4,14 @@ import { api } from "../lib/ipc";
 import { availabilityDetail, availabilityLabel } from "../lib/availability";
 import EmptyState from "./common/EmptyState";
 
-type SubTab = "services" | "drivers" | "startup" | "software" | "tasks";
+type SubTab =
+  | "services"
+  | "drivers"
+  | "startup"
+  | "software"
+  | "tasks"
+  | "storage"
+  | "sensors";
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "services", label: "Services" },
@@ -12,6 +19,8 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "startup", label: "Startup" },
   { id: "software", label: "Software" },
   { id: "tasks", label: "Tasks" },
+  { id: "storage", label: "Storage" },
+  { id: "sensors", label: "Sensors" },
 ];
 
 /**
@@ -59,6 +68,8 @@ export default function SystemPanel() {
       {tab === "startup" && <StartupTable query={query} />}
       {tab === "software" && <SoftwareTable query={query} />}
       {tab === "tasks" && <TasksTable query={query} />}
+      {tab === "storage" && <StorageTable query={query} />}
+      {tab === "sensors" && <SensorsTable />}
     </div>
   );
 }
@@ -68,6 +79,28 @@ export default function SystemPanel() {
  * than one tab-switch stale. */
 function useOnDemand<T>(fetcher: () => Promise<Sampled<T[]> | null>) {
   const [sampled, setSampled] = useState<Sampled<T[]> | null | "loading">("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    setSampled("loading");
+    fetcher()
+      .then((s) => {
+        if (!cancelled) setSampled(s);
+      })
+      .catch((e) => console.error("system inventory fetch failed", e));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return sampled;
+}
+
+/** Same shape as `useOnDemand`, for a single-value `Sampled<T>` result
+ * (the sensor bridge reports one snapshot, not a list). */
+function useOnDemandSingle<T>(fetcher: () => Promise<Sampled<T> | null>) {
+  const [sampled, setSampled] = useState<Sampled<T> | null | "loading">("loading");
 
   useEffect(() => {
     let cancelled = false;
@@ -311,6 +344,109 @@ function TasksTable({ query }: { query: string }) {
         </tbody>
       </table>
       {rows.length === 0 && <EmptyState title="No matching tasks" />}
+    </div>
+  );
+}
+
+function StorageTable({ query }: { query: string }) {
+  const sampled = useOnDemand(api.getStorageHealth);
+  if (sampled === "loading") return <EmptyState title="Loading storage health…" />;
+  if (sampled == null) return <EmptyState title="No data yet" />;
+  if (sampled.availability.state !== "ok" || !sampled.value) {
+    return (
+      <EmptyState
+        title={availabilityLabel(sampled.availability)}
+        detail={
+          availabilityDetail(sampled.availability) ??
+          "SMART/NVMe health requires an elevated process — see Settings."
+        }
+      />
+    );
+  }
+  const rows = filterRows(sampled.value, query, (r, q) =>
+    r.device.toLowerCase().includes(q) || (r.model ?? "").toLowerCase().includes(q),
+  );
+  return (
+    <div className="ptable-wrap">
+      <table className="ptable">
+        <thead>
+          <tr>
+            <th>Device</th>
+            <th>Model</th>
+            <th>Bus</th>
+            <th className="ptable__num">Size</th>
+            <th className="ptable__num">Temp</th>
+            <th>Health</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.device}>
+              <td className="ptable__name" title={r.device}>
+                {r.model ?? r.device}
+              </td>
+              <td className="ptable__muted">{r.model ?? "—"}</td>
+              <td className="ptable__muted">{r.busType ?? "—"}</td>
+              <td className="mono">
+                {r.sizeBytes != null ? `${(r.sizeBytes / 1e9).toFixed(0)} GB` : "—"}
+              </td>
+              <td className="mono">{r.temperatureC != null ? `${r.temperatureC}°C` : "—"}</td>
+              <td className="ptable__muted">
+                {r.predictedFailure == null
+                  ? "Unavailable"
+                  : r.predictedFailure
+                    ? "Failure predicted"
+                    : "OK"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && <EmptyState title="No matching drives" />}
+    </div>
+  );
+}
+
+function SensorsTable() {
+  const sampled = useOnDemandSingle(api.getSensorBridge);
+  if (sampled === "loading") return <EmptyState title="Loading sensors…" />;
+  if (sampled == null) return <EmptyState title="No data yet" />;
+  if (sampled.availability.state !== "ok" || !sampled.value) {
+    return (
+      <EmptyState
+        title={availabilityLabel(sampled.availability)}
+        detail={
+          availabilityDetail(sampled.availability) ??
+          "No supported sensor bridge (LibreHardwareMonitor) is currently running."
+        }
+      />
+    );
+  }
+  const { source, readings } = sampled.value;
+  if (readings.length === 0) {
+    return <EmptyState title="No sensors reported" detail={source ?? undefined} />;
+  }
+  return (
+    <div className="ptable-wrap">
+      {source && <p className="ptable__muted">Source: {source}</p>}
+      <table className="ptable">
+        <thead>
+          <tr>
+            <th>Sensor</th>
+            <th>Type</th>
+            <th className="ptable__num">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {readings.map((r, i) => (
+            <tr key={`${r.name}-${i}`}>
+              <td className="ptable__name">{r.name}</td>
+              <td className="ptable__muted">{r.kind}</td>
+              <td className="mono">{r.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

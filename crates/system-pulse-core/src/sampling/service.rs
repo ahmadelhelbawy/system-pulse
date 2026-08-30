@@ -18,8 +18,9 @@ use crate::collector::Collector;
 use crate::model::Sampled;
 use crate::scheduler::Scheduler;
 use crate::types::{
-    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot, ServiceSnapshot,
-    SmbiosInfo, StartupItem, SystemInfo, TelemetrySnapshot,
+    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot,
+    SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
+    SystemInfo, TelemetrySnapshot,
 };
 
 /// A sink cannot keep up with the current frame rate; the frame is dropped
@@ -95,6 +96,14 @@ impl TelemetryService {
 
     pub fn latest_scheduled_tasks(&self) -> Option<Sampled<Vec<ScheduledTaskSnapshot>>> {
         self.scheduler.latest_scheduled_tasks()
+    }
+
+    pub fn latest_storage_health(&self) -> Option<Sampled<Vec<StorageHealthSnapshot>>> {
+        self.scheduler.latest_storage_health()
+    }
+
+    pub fn latest_sensor_bridge(&self) -> Option<Sampled<SensorBridgeSnapshot>> {
+        self.scheduler.latest_sensor_bridge()
     }
 
     /// Queries recorded history — see `Scheduler::query_history`.

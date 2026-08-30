@@ -14,11 +14,13 @@ import type {
   ProcessIdentity,
   Sampled,
   ScheduledTaskSnapshot,
+  SensorBridgeSnapshot,
   ServiceSnapshot,
   Settings,
   SeriesId,
   SmbiosInfo,
   StartupItem,
+  StorageHealthSnapshot,
   SystemInfo,
   TelemetrySnapshot,
   TimeRange,
@@ -37,6 +39,10 @@ export const api = {
   killProcess: (identity: ProcessIdentity) =>
     invoke<void>("kill_process", { identity }),
   isElevated: () => invoke<boolean>("is_elevated"),
+  // User-initiated only — never called automatically. Relaunches the app
+  // elevated (UAC) and exits this instance on success; a rejected promise
+  // means the user cancelled the UAC prompt or the relaunch failed.
+  requestElevation: () => invoke<void>("request_elevation"),
   getSystemInfo: () => invoke<SystemInfo>("get_system_info"),
   getCapabilities: () => invoke<CollectorCapability[]>("get_capabilities"),
   // Both are on-demand reads of whatever the background Warm/Cold collector
@@ -57,6 +63,12 @@ export const api = {
     invoke<Sampled<InstalledSoftware[]> | null>("get_installed_software"),
   getScheduledTasks: () =>
     invoke<Sampled<ScheduledTaskSnapshot[]> | null>("get_scheduled_tasks"),
+  // Phase 4: same on-demand shape. getStorageHealth needs the app running
+  // elevated to return a value at all (see request_elevation above).
+  getStorageHealth: () =>
+    invoke<Sampled<StorageHealthSnapshot[]> | null>("get_storage_health"),
+  getSensorBridge: () =>
+    invoke<Sampled<SensorBridgeSnapshot> | null>("get_sensor_bridge"),
   quit: () => invoke<void>("quit"),
 };
 

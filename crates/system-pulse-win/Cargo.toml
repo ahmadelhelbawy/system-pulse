@@ -42,6 +42,10 @@ windows = { version = "0.62", features = [
     "Win32_System_Rpc",
     "Win32_Security",
     "Win32_Storage_FileSystem",
+    # Phase 4: storage health (SMART/NVMe via DeviceIoControl) and the
+    # LibreHardwareMonitor WMI sensor bridge (Wmi/Variant already above).
+    "Win32_System_Ioctl",
+    "Win32_System_IO",
 ] }
 # Safe registry access for startup entries / installed-software enumeration
 # (Phase 3) — already a proven dependency in src-tauri (autostart), reused

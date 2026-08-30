@@ -255,6 +255,18 @@ impl Scheduler {
         self.sections.lock().scheduled_tasks.clone()
     }
 
+    pub fn latest_storage_health(
+        &self,
+    ) -> Option<crate::model::Sampled<Vec<crate::types::StorageHealthSnapshot>>> {
+        self.sections.lock().storage_health.clone()
+    }
+
+    pub fn latest_sensor_bridge(
+        &self,
+    ) -> Option<crate::model::Sampled<crate::types::SensorBridgeSnapshot>> {
+        self.sections.lock().sensor_bridge.clone()
+    }
+
     /// Queries recorded history. Opens its own short-lived read connection
     /// to the writer's database file rather than sharing the writer's
     /// connection (WAL mode makes this safe — see `crate::history`'s

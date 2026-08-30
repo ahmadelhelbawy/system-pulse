@@ -9,8 +9,8 @@ use system_pulse_core::history::{HistoryPoint, SeriesId, TimeRange};
 use system_pulse_core::model::Sampled;
 use system_pulse_core::process::{kill_process as core_kill_process, ProcessIdentity};
 use system_pulse_core::types::{
-    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot, ServiceSnapshot,
-    SmbiosInfo, StartupItem,
+    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot,
+    SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
 };
 use system_pulse_core::{Settings, SystemInfo};
 use tauri::{AppHandle, State};
@@ -67,6 +67,14 @@ pub fn kill_process(identity: ProcessIdentity) -> Result<(), AppError> {
 #[tauri::command]
 pub fn is_elevated() -> bool {
     crate::windows::is_elevated()
+}
+
+/// Relaunches the app elevated (UAC), then exits this instance — see
+/// `crate::windows::request_elevation`. Always user-initiated; nothing
+/// calls this automatically.
+#[tauri::command]
+pub fn request_elevation(app: AppHandle) -> Result<(), AppError> {
+    crate::windows::request_elevation(&app).map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -155,6 +163,24 @@ pub fn get_scheduled_tasks(
     state: State<'_, AppState>,
 ) -> Option<Sampled<Vec<ScheduledTaskSnapshot>>> {
     state.telemetry.latest_scheduled_tasks()
+}
+
+/// Physical drive health via `DeviceIoControl` (Phase 4, Cold cadence) —
+/// `NeedsElevation` unless the app is running elevated, since opening a
+/// `\\.\PhysicalDriveN` handle at all requires admin.
+#[tauri::command]
+pub fn get_storage_health(
+    state: State<'_, AppState>,
+) -> Option<Sampled<Vec<StorageHealthSnapshot>>> {
+    state.telemetry.latest_storage_health()
+}
+
+/// Optional LibreHardwareMonitor WMI sensor bridge (Phase 4, Cold cadence) —
+/// `Unsupported { DriverAbsent }` when LibreHardwareMonitor isn't running,
+/// never a fabricated reading.
+#[tauri::command]
+pub fn get_sensor_bridge(state: State<'_, AppState>) -> Option<Sampled<SensorBridgeSnapshot>> {
+    state.telemetry.latest_sensor_bridge()
 }
 
 #[tauri::command]

@@ -125,9 +125,27 @@ export default function SettingsPanel() {
           <span className="settings__hint">
             Privilege level:{" "}
             <strong>{elevated ? "Elevated" : "Standard user"}</strong>
-            {elevated ? "" : " — terminating protected processes may be denied."}
+            {elevated
+              ? ""
+              : " — terminating protected processes may be denied, and storage health is unavailable."}
           </span>
         </div>
+        {!elevated && (
+          <div className="settings__row">
+            <button
+              className="button"
+              onClick={() =>
+                api.requestElevation().catch((e) => setError(String(e)))
+              }
+            >
+              Restart elevated
+            </button>
+            <span className="settings__hint">
+              Relaunches with administrator rights (UAC prompt). Only happens
+              when you click this — never automatic.
+            </span>
+          </div>
+        )}
         <div className="settings__row">
           <button className="button button--danger" onClick={() => api.quit()}>
             Quit System Pulse

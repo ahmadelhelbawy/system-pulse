@@ -452,6 +452,79 @@ pub struct ScheduledTaskSnapshot {
     pub last_task_result: Option<u32>,
 }
 
+/// `STORAGE_BUS_TYPE` (Phase 4) — which transport a physical drive is
+/// attached over; not exhaustive of the Win32 enum, but every value a
+/// real consumer disk realistically reports.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StorageBusType {
+    Ata,
+    Sata,
+    Scsi,
+    Sas,
+    Usb,
+    Nvme,
+    Raid,
+    Virtual,
+    Other,
+}
+
+/// One physical drive's health, from `IOCTL_STORAGE_QUERY_PROPERTY` +
+/// `IOCTL_STORAGE_PREDICT_FAILURE` (Phase 4) — needs an elevated process
+/// to even open `\\.\PhysicalDriveN`. Every field is independently
+/// `Option`: a value this machine's driver/hardware doesn't report is
+/// `None`, never a fabricated 0/false/"good" — see the master plan's
+/// storage-health acceptance criterion.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StorageHealthSnapshot {
+    /// e.g. `\\.\PhysicalDrive0`.
+    pub device: String,
+    pub model: Option<String>,
+    pub serial: Option<String>,
+    pub bus_type: Option<StorageBusType>,
+    pub size_bytes: Option<u64>,
+    pub temperature_c: Option<i32>,
+    /// `IOCTL_STORAGE_PREDICT_FAILURE`'s own verdict — the drive's
+    /// firmware/controller judged its own SMART data, not this app
+    /// interpreting raw attribute thresholds itself (see
+    /// `system-pulse-win::storage_health`'s module doc for why).
+    pub predicted_failure: Option<bool>,
+}
+
+/// One reading from the optional sensor bridge (Phase 4) — see
+/// `system-pulse-win::sensor_bridge`. Deliberately never installs or
+/// launches anything; only reads from a source the user already runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SensorReading {
+    pub name: String,
+    /// The bridge source's own sensor-type label (e.g. `"Temperature"`,
+    /// `"Fan"`, `"Voltage"`, `"Load"`, `"Power"`, `"Clock"`) passed
+    /// through as-is rather than mapped into a closed enum here — the
+    /// bridge's entire point is showing whatever an external tool
+    /// already measured, not this app inventing a taxonomy for hardware
+    /// it never queries directly.
+    pub kind: String,
+    pub value: f64,
+}
+
+/// The full sensor-bridge result for one tick. `source: None` (with an
+/// empty `readings`) means no supported bridge was found running — never
+/// distinguished from "found but had zero sensors," since both look
+/// identical to the UI ("nothing to show") and the *reason* is visible
+/// instead through this collector's own `Availability`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SensorBridgeSnapshot {
+    pub source: Option<String>,
+    pub readings: Vec<SensorReading>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

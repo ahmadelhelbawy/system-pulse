@@ -20,7 +20,7 @@ export type CollectorCapability = { id: CollectorId, requiredPrivilege: Privileg
 /**
  * Identifies a collector for scheduling, logging, and capability reports.
  */
-export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process" | "windowsInternal" | "connections" | "hardware" | "pdhGpu" | "services" | "drivers" | "startup" | "installedSoftware" | "scheduledTasks";
+export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process" | "windowsInternal" | "connections" | "hardware" | "pdhGpu" | "services" | "drivers" | "startup" | "installedSoftware" | "scheduledTasks" | "storageHealth" | "sensorBridge";
 
 /**
  * One row from `GetExtendedTcpTable`/`GetExtendedUdpTable`
@@ -232,6 +232,31 @@ path: string, enabled: boolean, lastRunTime: UnixMillis | null, nextRunTime: Uni
 lastTaskResult: number | null, };
 
 /**
+ * The full sensor-bridge result for one tick. `source: None` (with an
+ * empty `readings`) means no supported bridge was found running — never
+ * distinguished from "found but had zero sensors," since both look
+ * identical to the UI ("nothing to show") and the *reason* is visible
+ * instead through this collector's own `Availability`.
+ */
+export type SensorBridgeSnapshot = { source: string | null, readings: Array<SensorReading>, };
+
+/**
+ * One reading from the optional sensor bridge (Phase 4) — see
+ * `system-pulse-win::sensor_bridge`. Deliberately never installs or
+ * launches anything; only reads from a source the user already runs.
+ */
+export type SensorReading = { name: string, 
+/**
+ * The bridge source's own sensor-type label (e.g. `"Temperature"`,
+ * `"Fan"`, `"Voltage"`, `"Load"`, `"Power"`, `"Clock"`) passed
+ * through as-is rather than mapped into a closed enum here — the
+ * bridge's entire point is showing whatever an external tool
+ * already measured, not this app inventing a taxonomy for hardware
+ * it never queries directly.
+ */
+kind: string, value: number, };
+
+/**
  * Which recorded metric a history query wants. Closed enum for the same
  * reason `HistorySample`'s fields are fixed columns rather than a keyed
  * map — see that type's doc.
@@ -319,6 +344,34 @@ export type StartupItem = { name: string, command: string, location: StartupLoca
  * rather than collapsing into one bag.
  */
 export type StartupLocation = "hkcuRun" | "hklmRun" | "hkcuRunOnce" | "hklmRunOnce" | "userStartupFolder" | "commonStartupFolder";
+
+/**
+ * `STORAGE_BUS_TYPE` (Phase 4) — which transport a physical drive is
+ * attached over; not exhaustive of the Win32 enum, but every value a
+ * real consumer disk realistically reports.
+ */
+export type StorageBusType = "ata" | "sata" | "scsi" | "sas" | "usb" | "nvme" | "raid" | "virtual" | "other";
+
+/**
+ * One physical drive's health, from `IOCTL_STORAGE_QUERY_PROPERTY` +
+ * `IOCTL_STORAGE_PREDICT_FAILURE` (Phase 4) — needs an elevated process
+ * to even open `\\.\PhysicalDriveN`. Every field is independently
+ * `Option`: a value this machine's driver/hardware doesn't report is
+ * `None`, never a fabricated 0/false/"good" — see the master plan's
+ * storage-health acceptance criterion.
+ */
+export type StorageHealthSnapshot = { 
+/**
+ * e.g. `\\.\PhysicalDrive0`.
+ */
+device: string, model: string | null, serial: string | null, busType: StorageBusType | null, sizeBytes: number | null, temperatureC: number | null, 
+/**
+ * `IOCTL_STORAGE_PREDICT_FAILURE`'s own verdict — the drive's
+ * firmware/controller judged its own SMART data, not this app
+ * interpreting raw attribute thresholds itself (see
+ * `system-pulse-win::storage_health`'s module doc for why).
+ */
+predictedFailure: boolean | null, };
 
 export type SystemInfo = { osName: string, osVersion: string, kernelVersion: string, hostname: string, arch: string, cpuModel: string, cpuCores: number, totalMemory: number, };
 

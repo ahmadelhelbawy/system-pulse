@@ -31,5 +31,9 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Threading",
+    # Phase 4: request_elevation's ShellExecuteExW("runas", ...) relaunch.
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Registry",
 ] }
 winreg = "0.55"

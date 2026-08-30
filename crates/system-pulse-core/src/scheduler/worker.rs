@@ -166,6 +166,12 @@ fn publish(sections: &SharedSections, output: CollectorOutput) {
         CollectorOutput::ScheduledTasks(t) => {
             sections.scheduled_tasks = Some(t);
         }
+        CollectorOutput::StorageHealth(s) => {
+            sections.storage_health = Some(s);
+        }
+        CollectorOutput::SensorBridge(s) => {
+            sections.sensor_bridge = Some(s);
+        }
         // Hot-only outputs never originate from a worker loop.
         CollectorOutput::Cpu(_) | CollectorOutput::Memory(_) => {}
     }

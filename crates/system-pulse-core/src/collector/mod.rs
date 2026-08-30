@@ -32,7 +32,8 @@ use crate::model::{Availability, Sampled};
 use crate::types::{
     ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, GpuSnapshot,
     InstalledSoftware, MemorySnapshot, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot,
-    ServiceSnapshot, SmbiosInfo, StartupItem, WindowsInternalState,
+    SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
+    WindowsInternalState,
 };
 
 /// Identifies a collector for scheduling, logging, and capability reports.
@@ -55,6 +56,8 @@ pub enum CollectorId {
     Startup,
     InstalledSoftware,
     ScheduledTasks,
+    StorageHealth,
+    SensorBridge,
 }
 
 /// How often a collector should run, and on which thread.
@@ -148,6 +151,15 @@ pub enum CollectorOutput {
     /// thread with `CoSetProxyBlanket` per proxy, no process-wide COM
     /// security call.
     ScheduledTasks(Sampled<Vec<ScheduledTaskSnapshot>>),
+    /// `IOCTL_STORAGE_QUERY_PROPERTY`/`IOCTL_STORAGE_PREDICT_FAILURE`
+    /// (Phase 4) — implemented in `system-pulse-win`. Needs elevation to
+    /// open a physical drive handle at all.
+    StorageHealth(Sampled<Vec<StorageHealthSnapshot>>),
+    /// The optional LibreHardwareMonitor/HWiNFO sensor bridge (Phase 4) —
+    /// implemented in `system-pulse-win`. Read-only, opt-in by the mere
+    /// fact of the external tool already running; never installs or
+    /// launches anything.
+    SensorBridge(Sampled<SensorBridgeSnapshot>),
 }
 
 /// A pluggable source of telemetry.

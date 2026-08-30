@@ -1,18 +1,19 @@
 //! Windows-only telemetry collectors: Phase 1B (`GetPerformanceInfo`,
 //! TCP/UDP connection tables, PDH per-process GPU utilization, SMBIOS
-//! hardware inventory) and Phase 3 (services, drivers, startup entries,
-//! installed software, Task Scheduler).
+//! hardware inventory), Phase 3 (services, drivers, startup entries,
+//! installed software, Task Scheduler), and Phase 4 (storage health,
+//! optional sensor bridge).
 //!
 //! Depends on `system-pulse-core` (for the `Collector` trait, provenance
 //! model, and contract types) but is never depended on by it — the
 //! reverse would be circular, and it's also *why* the contract types these
 //! collectors produce (`WindowsInternalState`, `ConnectionSnapshot`,
 //! `SmbiosInfo`, the GPU-attribution fields on `ProcessSnapshot`,
-//! `ServiceSnapshot`, etc.) live in `system-pulse-core::types` rather than
-//! here: only that crate's own `cargo test` can run `ts-rs`'s export tests
-//! natively in this repo's WSL2 dev environment, where this crate can
-//! only ever be `cargo check --target x86_64-pc-windows-msvc`-verified,
-//! never executed.
+//! `ServiceSnapshot`, `StorageHealthSnapshot`, etc.) live in
+//! `system-pulse-core::types` rather than here: only that crate's own
+//! `cargo test` can run `ts-rs`'s export tests natively in this repo's
+//! WSL2 dev environment, where this crate can only ever be
+//! `cargo check --target x86_64-pc-windows-msvc`-verified, never executed.
 //!
 //! Every collector here has a real `cfg(windows)` implementation and a
 //! `cfg(not(windows))` stub that reports `Unsupported` — so the workspace
@@ -23,8 +24,8 @@
 //!
 //! `com_spike` (Phase 3's prerequisite COM/WebView2 investigation) is not
 //! a collector and isn't wired into `all_collectors()` — see its own doc
-//! for the recorded finding that makes the Task Scheduler collector below
-//! safe to ship.
+//! for the recorded finding that makes the Task Scheduler and sensor
+//! bridge collectors safe to ship.
 
 #![warn(unsafe_code)]
 
@@ -35,9 +36,11 @@ pub mod installed_software;
 pub mod pdh_gpu;
 pub mod perf_info;
 pub mod scheduled_tasks;
+pub mod sensor_bridge;
 pub mod services;
 pub mod smbios;
 pub mod startup;
+pub mod storage_health;
 pub mod tcp_table;
 
 pub use drivers::DriversCollector;
@@ -45,9 +48,11 @@ pub use installed_software::InstalledSoftwareCollector;
 pub use pdh_gpu::PdhGpuCollector;
 pub use perf_info::PerfInfoCollector;
 pub use scheduled_tasks::ScheduledTasksCollector;
+pub use sensor_bridge::SensorBridgeCollector;
 pub use services::ServicesCollector;
 pub use smbios::SmbiosCollector;
 pub use startup::StartupCollector;
+pub use storage_health::StorageHealthCollector;
 pub use tcp_table::TcpTableCollector;
 
 use system_pulse_core::collector::{Collector, CollectorCapability};
@@ -73,6 +78,8 @@ pub fn probe_capabilities() -> Vec<CollectorCapability> {
         probe_one(Box::<StartupCollector>::default()),
         probe_one(Box::<InstalledSoftwareCollector>::default()),
         probe_one(Box::<ScheduledTasksCollector>::default()),
+        probe_one(Box::<StorageHealthCollector>::default()),
+        probe_one(Box::<SensorBridgeCollector>::default()),
     ]
 }
 
@@ -89,6 +96,8 @@ pub fn all_collectors() -> Vec<Box<dyn Collector>> {
         Box::<StartupCollector>::default(),
         Box::<InstalledSoftwareCollector>::default(),
         Box::<ScheduledTasksCollector>::default(),
+        Box::<StorageHealthCollector>::default(),
+        Box::<SensorBridgeCollector>::default(),
     ]
 }
 
@@ -97,13 +106,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probes_all_nine_collectors() {
+    fn probes_all_eleven_collectors() {
         let caps = probe_capabilities();
-        assert_eq!(caps.len(), 9);
+        assert_eq!(caps.len(), 11);
     }
 
     #[test]
-    fn all_collectors_constructs_nine() {
-        assert_eq!(all_collectors().len(), 9);
+    fn all_collectors_constructs_eleven() {
+        assert_eq!(all_collectors().len(), 11);
     }
 }

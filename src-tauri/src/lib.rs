@@ -58,6 +58,7 @@ pub fn run() {
             ipc::set_visibility,
             ipc::kill_process,
             ipc::is_elevated,
+            ipc::request_elevation,
             ipc::get_system_info,
             ipc::get_capabilities,
             ipc::get_connections,
@@ -68,6 +69,8 @@ pub fn run() {
             ipc::get_startup,
             ipc::get_installed_software,
             ipc::get_scheduled_tasks,
+            ipc::get_storage_health,
+            ipc::get_sensor_bridge,
             ipc::quit,
         ])
         .build(tauri::generate_context!())
