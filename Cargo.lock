@@ -3614,6 +3614,7 @@ name = "system-pulse-win"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
+ "serde_json",
  "system-pulse-core",
  "windows 0.62.2",
  "winreg",

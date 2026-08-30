@@ -21,6 +21,9 @@ path = "src/lib.rs"
 # what this crate declares.
 system-pulse-core = { path = "../system-pulse-core", default-features = false }
 parking_lot = "0.12"
+# Event Log bookmark persistence (Phase 5) — plain per-channel XML-string
+# JSON, not a database; already a proven dependency via system-pulse-core.
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -46,6 +49,15 @@ windows = { version = "0.62", features = [
     # LibreHardwareMonitor WMI sensor bridge (Wmi/Variant already above).
     "Win32_System_Ioctl",
     "Win32_System_IO",
+    # Phase 5: Event Log (EvtQuery/EvtNext/bookmarks), Security Center
+    # (WscGetSecurityProviderHealth), firewall (INetFwPolicy2, COM —
+    # Com/Variant/Ole already above), and code-signature verification
+    # (WinVerifyTrust) for the persistence checks.
+    "Win32_System_EventLog",
+    "Win32_System_SecurityCenter",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_Security_WinTrust",
+    "Win32_Security_Cryptography",
 ] }
 # Safe registry access for startup entries / installed-software enumeration
 # (Phase 3) — already a proven dependency in src-tauri (autostart), reused

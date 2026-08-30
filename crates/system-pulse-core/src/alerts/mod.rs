@@ -1,27 +1,54 @@
-//! Deterministic alert hysteresis: turns `health::analyze`'s per-tick,
-//! stateless candidate list into a stabilized set with debounced
-//! raise/clear transitions — the master plan's "an oscillating input
-//! produces one alert, not N" requirement.
+//! Deterministic alert hysteresis: turns a per-tick, stateless candidate
+//! list into a stabilized set with debounced raise/clear transitions — the
+//! master plan's "an oscillating input produces one alert, not N"
+//! requirement.
 //!
-//! This is layered strictly on top of `health::analyze`, never inside it:
-//! `analyze` stays a pure "is this condition true right now" function
-//! (easy to unit test with a single frame), while `AlertEngine` is the
-//! only place that holds state across ticks. `HealthAlert::id` (see
-//! `types.rs`) is the identity debounced on.
+//! This is layered strictly on top of whatever produces the raw candidates
+//! (`health::analyze` for threshold-based alerts, `analysis::anomaly` for
+//! statistical ones — Phase 5), never inside them: a candidate source stays
+//! a pure "is this condition true right now" function (easy to unit test
+//! with a single frame), while [`HysteresisEngine`] is the only place that
+//! holds state across evaluations.
+//!
+//! Generic over any [`Identified`] type (Phase 5) rather than hardcoded to
+//! `HealthAlert`, because a second, structurally identical consumer showed
+//! up immediately (anomaly findings) — not speculative reuse. [`AlertEngine`]
+//! is kept as the exact name/shape existing call sites already use.
 
 use std::collections::HashMap;
 
-use crate::types::HealthAlert;
+use crate::types::{HealthAlert, Severity};
 
-/// Consecutive ticks a condition must hold before its alert is raised, and
-/// consecutive ticks of absence before it's cleared. Applied symmetrically
-/// so an alert is exactly as slow to disappear as to appear — a single-tick
-/// dip below threshold doesn't clear it, matching how a single-tick spike
-/// above threshold doesn't raise it either.
+/// Consecutive evaluations a condition must hold before its alert is
+/// raised, and consecutive absences before it's cleared. Applied
+/// symmetrically so an alert is exactly as slow to disappear as to appear
+/// — a single dip below threshold doesn't clear it, matching how a single
+/// spike above threshold doesn't raise it either. Note this is in units of
+/// *evaluate() calls*, not wall-clock time — an engine fed from a Cold-tier
+/// collector debounces just as meaningfully over that collector's own
+/// (slower) cadence.
 const HYSTERESIS_TICKS: u32 = 3;
 
-#[derive(Default)]
-struct AlertState {
+/// What a [`HysteresisEngine`] needs from the candidate type: a stable
+/// identity to debounce on and a severity for sort order. Deliberately not
+/// `Ord`/`Eq` on the whole struct — two instances of the same alert with a
+/// worsening detail string are still "the same alert" for hysteresis
+/// purposes, which is exactly what keying on `id()` alone captures.
+pub trait Identified {
+    fn id(&self) -> &str;
+    fn severity(&self) -> Severity;
+}
+
+impl Identified for HealthAlert {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn severity(&self) -> Severity {
+        self.severity
+    }
+}
+
+struct AlertState<T> {
     consecutive_present: u32,
     consecutive_absent: u32,
     active: bool,
@@ -32,46 +59,74 @@ struct AlertState {
     /// `evaluate()` call that sees this id, which happens before
     /// `active` can ever become true — so it's always `Some` by the time
     /// anything reads it back out.
-    latest: Option<HealthAlert>,
+    latest: Option<T>,
 }
 
-/// Owns per-alert hysteresis state across ticks. One instance lives for
-/// the lifetime of the hot loop (see `scheduler::hot::HotLoop`) — a fresh
-/// engine (e.g. across a process restart) has no memory of prior state,
-/// which is correct: hysteresis smooths noise within a running session,
-/// it isn't meant to survive a restart.
-#[derive(Default)]
-pub struct AlertEngine {
-    states: HashMap<String, AlertState>,
+impl<T> Default for AlertState<T> {
+    fn default() -> Self {
+        Self {
+            consecutive_present: 0,
+            consecutive_absent: 0,
+            active: false,
+            latest: None,
+        }
+    }
 }
 
-impl AlertEngine {
+/// Owns per-alert hysteresis state across evaluations. One instance lives
+/// for the lifetime of whatever loop feeds it — a fresh engine (e.g. across
+/// a process restart) has no memory of prior state, which is correct:
+/// hysteresis smooths noise within a running session, it isn't meant to
+/// survive a restart.
+pub struct HysteresisEngine<T> {
+    states: HashMap<String, AlertState<T>>,
+    ticks: u32,
+}
+
+impl<T: Clone + Identified> Default for HysteresisEngine<T> {
+    fn default() -> Self {
+        Self::with_ticks(HYSTERESIS_TICKS)
+    }
+}
+
+impl<T: Clone + Identified> HysteresisEngine<T> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// `candidates` is this tick's raw, stateless list from
-    /// `health::analyze`. Returns the stabilized alerts that should
-    /// actually be surfaced, most severe first.
-    pub fn evaluate(&mut self, candidates: Vec<HealthAlert>) -> Vec<HealthAlert> {
+    /// A custom debounce length — e.g. a statistical anomaly detector
+    /// wanting more consecutive confirmations than a hard threshold check,
+    /// since transient noise is more common than a genuine step change.
+    pub fn with_ticks(ticks: u32) -> Self {
+        Self {
+            states: HashMap::new(),
+            ticks,
+        }
+    }
+
+    /// `candidates` is this evaluation's raw, stateless list. Returns the
+    /// stabilized alerts that should actually be surfaced, most severe
+    /// first.
+    pub fn evaluate(&mut self, candidates: Vec<T>) -> Vec<T> {
         let mut seen = std::collections::HashSet::with_capacity(candidates.len());
         for alert in candidates {
-            seen.insert(alert.id.clone());
-            let state = self.states.entry(alert.id.clone()).or_default();
+            let id = alert.id().to_string();
+            seen.insert(id.clone());
+            let state = self.states.entry(id).or_default();
             state.consecutive_present += 1;
             state.consecutive_absent = 0;
-            if state.consecutive_present >= HYSTERESIS_TICKS {
+            if state.consecutive_present >= self.ticks {
                 state.active = true;
             }
             state.latest = Some(alert);
         }
 
-        // Everything not seen this tick is one step closer to clearing.
+        // Everything not seen this evaluation is one step closer to clearing.
         for (id, state) in self.states.iter_mut() {
             if !seen.contains(id) {
                 state.consecutive_present = 0;
                 state.consecutive_absent += 1;
-                if state.consecutive_absent >= HYSTERESIS_TICKS {
+                if state.consecutive_absent >= self.ticks {
                     state.active = false;
                 }
             }
@@ -79,25 +134,30 @@ impl AlertEngine {
         // Drop bookkeeping for alerts that are both inactive and long gone
         // — otherwise a one-off spike leaves a permanent, ever-growing
         // entry in `states` for the life of the process.
+        let ticks = self.ticks;
         self.states
-            .retain(|_, s| s.active || s.consecutive_absent < HYSTERESIS_TICKS);
+            .retain(|_, s| s.active || s.consecutive_absent < ticks);
 
-        let mut out: Vec<HealthAlert> = self
+        let mut out: Vec<T> = self
             .states
             .values()
             .filter(|s| s.active)
             .filter_map(|s| s.latest.clone())
             .collect();
-        out.sort_by_key(|a| severity_rank(a.severity));
+        out.sort_by_key(|a| severity_rank(a.severity()));
         out
     }
 }
 
-fn severity_rank(s: crate::types::Severity) -> u8 {
+/// Backward-compatible name for the health-alert engine every existing
+/// call site (`scheduler::hot::HotLoop`, tests) already uses.
+pub type AlertEngine = HysteresisEngine<HealthAlert>;
+
+fn severity_rank(s: Severity) -> u8 {
     match s {
-        crate::types::Severity::Critical => 0,
-        crate::types::Severity::Warning => 1,
-        crate::types::Severity::Info => 2,
+        Severity::Critical => 0,
+        Severity::Warning => 1,
+        Severity::Info => 2,
     }
 }
 

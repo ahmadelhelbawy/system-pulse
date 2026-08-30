@@ -20,7 +20,7 @@ export type CollectorCapability = { id: CollectorId, requiredPrivilege: Privileg
 /**
  * Identifies a collector for scheduling, logging, and capability reports.
  */
-export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process" | "windowsInternal" | "connections" | "hardware" | "pdhGpu" | "services" | "drivers" | "startup" | "installedSoftware" | "scheduledTasks" | "storageHealth" | "sensorBridge";
+export type CollectorId = "cpu" | "memory" | "disk" | "network" | "gpu" | "process" | "windowsInternal" | "connections" | "hardware" | "pdhGpu" | "services" | "drivers" | "startup" | "installedSoftware" | "scheduledTasks" | "storageHealth" | "sensorBridge" | "eventLog" | "securityPosture";
 
 /**
  * One row from `GetExtendedTcpTable`/`GetExtendedUdpTable`
@@ -45,6 +45,35 @@ perCore: Array<number>,
  * Representative current frequency in MHz (best-effort).
  */
 frequencyMhz: number | null, coreCount: number, };
+
+/**
+ * A correlated diagnostic finding (Phase 5) — an active alert enriched
+ * with the actual historical evidence behind it (see
+ * `crate::analysis::diagnostics::correlate`). `evidence` is empty and
+ * `duration_ms` is `0` whenever history has no data for this finding's
+ * series (history disabled, or too new to have any samples yet) — the
+ * finding is still reported (it's real right now), but nothing about its
+ * past is invented.
+ */
+export type DiagnosticFinding = { 
+/**
+ * Same identity as the alert this was correlated from.
+ */
+id: string, severity: Severity, title: string, detail: string, 
+/**
+ * Associated process id when the underlying alert concerns a single
+ * process — process-category alerts already carry their own evidence
+ * (the process name/id is the finding), so `evidence` is empty for
+ * these rather than a fabricated historical lookup this app has no
+ * per-process history to back.
+ */
+pid: number | null, 
+/**
+ * Milliseconds this condition has been continuously present in
+ * recorded history, estimated from the oldest evidence point still at
+ * or above the alert's own threshold. `0` when there's no evidence.
+ */
+durationMs: number, evidence: Array<EvidencePoint>, };
 
 /**
  * One DIMM entry from an SMBIOS Type 17 (Memory Device) structure.
@@ -101,10 +130,66 @@ contributors: Array<string>, };
 export type DriverSnapshot = { name: string, description: string | null, version: string | null, baseAddress: number, };
 
 /**
+ * `EVT_SYSTEM_PROPERTY_ID(EvtSystemLevel)`'s value, mapped to a closed
+ * enum — Windows event levels 0 (LogAlways) and 4 (Information) both
+ * collapse to `Information` here since neither carries extra meaning for
+ * this app; an unrecognized value also falls back to `Information` rather
+ * than guessing at severity.
+ */
+export type EventLevel = "critical" | "error" | "warning" | "information" | "verbose";
+
+/**
+ * One Windows Event Log record (Phase 5) — see
+ * `system-pulse-win::event_log`. `message` is best-effort (`EvtFormatMessage`
+ * against the provider's own metadata) and `None` when that lookup fails
+ * for any reason (provider metadata absent, message table missing) —
+ * never a fabricated or truncated guess at what the event meant.
+ */
+export type EventLogEntry = { 
+/**
+ * e.g. `"Application"`, `"System"`, `"Security"`.
+ */
+channel: string, recordId: number, eventId: number, level: EventLevel, provider: string, timeCreated: UnixMillis, message: string | null, };
+
+/**
+ * The bounded, incrementally-read event log window for one collection
+ * cycle (Phase 5). `dropped` is the ring's own overflow counter (see
+ * `crate::transport::BoundedRing`) — visible rather than a silent gap, per
+ * the master plan's backpressure rule for event-like topics.
+ * `security_included` is `false` whenever the Security channel was
+ * skipped because the process isn't elevated: the collector still reports
+ * `Availability::Ok` for the Application/System channels it *could* read
+ * rather than failing the whole snapshot over one gated channel.
+ */
+export type EventLogSnapshot = { 
+/**
+ * Oldest first — the order `BoundedRing` iterates and the order new
+ * records were discovered in.
+ */
+entries: Array<EventLogEntry>, dropped: number, securityIncluded: boolean, };
+
+/**
+ * One historical sample cited as evidence for a [`DiagnosticFinding`] —
+ * literally a `query_history` result point, never a synthesized or
+ * interpolated value.
+ */
+export type EvidencePoint = { tsMs: UnixMillis, value: number, };
+
+/**
  * Why a collector's read failed this time (transient, as opposed to
  * [`UnsupportedReason`], which is permanent for this machine).
  */
 export type FailureCode = "timeout" | "accessDenied" | "apiError" | "parseError" | "cancelled";
+
+/**
+ * `INetFwPolicy2`'s per-profile enabled state (Phase 5). `Unknown` is a
+ * real, distinct value — reported when the profile's own COM call fails —
+ * never coerced to `Off` (which would fabricate a security-relevant
+ * negative) or `On` (which would hide a real problem).
+ */
+export type FirewallProfileState = "on" | "off" | "unknown";
+
+export type FirewallStatus = { domain: FirewallProfileState, private: FirewallProfileState, public: FirewallProfileState, };
 
 export type GpuSnapshot = { name: string, utilizationPercent: number | null, vramUsed: number | null, vramTotal: number | null, temperatureC: number | null, powerW: number | null, driverVersion: string | null, };
 
@@ -171,6 +256,16 @@ downloadRate: number,
 uploadRate: number, totalRx: number, totalTx: number, };
 
 /**
+ * One deterministic, rule-based finding from the persistence checks
+ * (Phase 5) — an autostart entry or scheduled task whose target looks
+ * suspicious (missing file, unusual location, an unsigned binary). `signed`
+ * is `None` whenever `WinVerifyTrust` wasn't run or couldn't reach a
+ * verdict — never coerced to `Some(false)`, which would fabricate "this is
+ * definitely unsigned" from "this app didn't check."
+ */
+export type PersistenceFinding = { id: string, severity: Severity, title: string, detail: string, path: string | null, signed: boolean | null, };
+
+/**
  * The minimum privilege a collector needs to produce real data. Purely
  * descriptive in Phase 1A (no collector here needs more than `User`) — it
  * exists now so `get_capabilities` has something honest to report and so
@@ -230,6 +325,37 @@ path: string, enabled: boolean, lastRunTime: UnixMillis | null, nextRunTime: Uni
  * once; `0` means success, matching Task Scheduler's own convention.
  */
 lastTaskResult: number | null, };
+
+/**
+ * Security Center + firewall + Secure Boot + persistence checks for one
+ * collection cycle (Phase 5). Persistence findings are computed on demand
+ * from already-collected Phase 3 data (see `system-pulse-win::security_posture`'s
+ * module doc) rather than by this collector itself, so they aren't part of
+ * this snapshot — see the `get_persistence_findings` IPC command instead.
+ */
+export type SecurityPostureSnapshot = { firewall: FirewallStatus | null, antivirus: Array<SecurityProviderStatus>, 
+/**
+ * `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State\UEFISecureBootEnabled`
+ * — `None` on non-UEFI/legacy-BIOS systems where the key doesn't exist
+ * at all, distinct from `Some(false)` (UEFI present, Secure Boot off).
+ */
+secureBootEnabled: boolean | null, };
+
+/**
+ * One `WscGetSecurityProviderHealth` provider's reported health (Phase 5)
+ * — `health` is the WSC API's own word (`"good"` | `"notMonitored"` |
+ * `"poor"` | `"snooze"`), passed through rather than reinterpreted, since
+ * WSC (not this app) is the authority on what "good" means for a given AV
+ * product.
+ */
+export type SecurityProviderStatus = { 
+/**
+ * "antivirus" | "autoUpdate" — which WSC provider category this is;
+ * firewall health is reported via `FirewallStatus` instead, since WSC's
+ * firewall bit only says "some profile is protected," while
+ * `INetFwPolicy2` gives the real per-profile breakdown.
+ */
+kind: string, health: string, };
 
 /**
  * The full sensor-bridge result for one tick. `source: None` (with an
@@ -404,7 +530,20 @@ windowsInternal: Sampled<WindowsInternalState>,
  * (Phase 2) rather than the raw per-tick alert list `health::analyze`
  * produces — see `crate::alerts::AlertEngine`.
  */
-health: HealthScore, };
+health: HealthScore, 
+/**
+ * Statistically unusual readings (Phase 5) — deliberately separate
+ * from `health.alerts`: these flag a deviation from this machine's own
+ * recent pattern, not a crossed absolute threshold, and folding them
+ * into the health score would conflate two different kinds of signal.
+ * Debounced the same way health alerts are — see
+ * `crate::analysis::anomaly` and `crate::alerts::HysteresisEngine`.
+ * `#[serde(default)]` so the Phase 0-4 replay fixtures (captured
+ * before this field existed) still deserialize, as an empty list —
+ * the honest answer, since Phase 5 anomaly detection didn't exist
+ * when they were recorded.
+ */
+anomalies: Array<HealthAlert>, };
 
 /**
  * An inclusive wall-clock query range. `UnixMillis` on both ends — see

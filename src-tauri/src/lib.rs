@@ -71,6 +71,10 @@ pub fn run() {
             ipc::get_scheduled_tasks,
             ipc::get_storage_health,
             ipc::get_sensor_bridge,
+            ipc::get_event_log,
+            ipc::get_security_posture,
+            ipc::get_diagnostics,
+            ipc::get_persistence_findings,
             ipc::quit,
         ])
         .build(tauri::generate_context!())

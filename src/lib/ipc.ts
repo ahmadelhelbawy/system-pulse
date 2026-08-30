@@ -8,12 +8,17 @@ import type {
   AppError,
   CollectorCapability,
   ConnectionSnapshot,
+  DiagnosticFinding,
   DriverSnapshot,
+  EventLogSnapshot,
+  HealthAlert,
   HistoryPoint,
   InstalledSoftware,
+  PersistenceFinding,
   ProcessIdentity,
   Sampled,
   ScheduledTaskSnapshot,
+  SecurityPostureSnapshot,
   SensorBridgeSnapshot,
   ServiceSnapshot,
   Settings,
@@ -69,6 +74,19 @@ export const api = {
     invoke<Sampled<StorageHealthSnapshot[]> | null>("get_storage_health"),
   getSensorBridge: () =>
     invoke<Sampled<SensorBridgeSnapshot> | null>("get_sensor_bridge"),
+  // Phase 5: same on-demand shape. getEventLog's securityIncluded field
+  // tells the caller whether the Security channel is actually being read
+  // right now (gated on elevation inside the collector itself).
+  getEventLog: () => invoke<Sampled<EventLogSnapshot> | null>("get_event_log"),
+  getSecurityPosture: () =>
+    invoke<Sampled<SecurityPostureSnapshot> | null>("get_security_posture"),
+  // Correlates the caller's currently-active alerts (concatenate
+  // `health.alerts` and `anomalies` from the latest telemetry frame)
+  // against recorded history — see `system_pulse_core::analysis::diagnostics`.
+  getDiagnostics: (alerts: HealthAlert[]) =>
+    invoke<DiagnosticFinding[]>("get_diagnostics", { alerts }),
+  getPersistenceFindings: () =>
+    invoke<PersistenceFinding[]>("get_persistence_findings"),
   quit: () => invoke<void>("quit"),
 };
 

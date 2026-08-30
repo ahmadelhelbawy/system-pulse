@@ -4,12 +4,14 @@
 //! generic "run this" or shell-execution command by design: the frontend can
 //! only invoke the specific, audited operations declared here.
 
+use system_pulse_core::analysis::diagnostics::correlate;
 use system_pulse_core::collector::{probe_capabilities, CollectorCapability};
 use system_pulse_core::history::{HistoryPoint, SeriesId, TimeRange};
-use system_pulse_core::model::Sampled;
+use system_pulse_core::model::{Sampled, UnixMillis};
 use system_pulse_core::process::{kill_process as core_kill_process, ProcessIdentity};
 use system_pulse_core::types::{
-    ConnectionSnapshot, DriverSnapshot, InstalledSoftware, ScheduledTaskSnapshot,
+    ConnectionSnapshot, DiagnosticFinding, DriverSnapshot, EventLogSnapshot, HealthAlert,
+    InstalledSoftware, PersistenceFinding, ScheduledTaskSnapshot, SecurityPostureSnapshot,
     SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
 };
 use system_pulse_core::{Settings, SystemInfo};
@@ -181,6 +183,73 @@ pub fn get_storage_health(
 #[tauri::command]
 pub fn get_sensor_bridge(state: State<'_, AppState>) -> Option<Sampled<SensorBridgeSnapshot>> {
     state.telemetry.latest_sensor_bridge()
+}
+
+/// Windows Event Log (Phase 5, Cold cadence) — bounded, bookmarked
+/// incremental reads; `securityIncluded` on the snapshot tells the
+/// frontend whether the Security channel is actually being read right now
+/// (it's gated on elevation inside the collector itself, not by this
+/// command).
+#[tauri::command]
+pub fn get_event_log(state: State<'_, AppState>) -> Option<Sampled<EventLogSnapshot>> {
+    state.telemetry.latest_event_log()
+}
+
+/// Security Center + firewall + Secure Boot (Phase 5, Cold cadence).
+/// Persistence findings are a separate, on-demand command (below) rather
+/// than part of this snapshot — see `system_pulse_win::security_posture`'s
+/// module doc.
+#[tauri::command]
+pub fn get_security_posture(
+    state: State<'_, AppState>,
+) -> Option<Sampled<SecurityPostureSnapshot>> {
+    state.telemetry.latest_security_posture()
+}
+
+/// Correlates the frontend's currently-active alerts (health + anomaly —
+/// the caller concatenates `health.alerts` and `anomalies` from its latest
+/// telemetry frame) against recorded history, producing evidence-bearing
+/// diagnostic findings (Phase 5). Pure correlation logic lives in
+/// `system_pulse_core::analysis::diagnostics`; this command only supplies
+/// the `query_history` closure that logic needs.
+#[tauri::command]
+pub fn get_diagnostics(
+    state: State<'_, AppState>,
+    alerts: Vec<HealthAlert>,
+) -> Vec<DiagnosticFinding> {
+    let history = |series: SeriesId, range: TimeRange| -> Vec<HistoryPoint> {
+        state
+            .telemetry
+            .query_history(range, series)
+            .unwrap_or_default()
+    };
+    correlate(&alerts, &history, UnixMillis::now())
+}
+
+/// Deterministic, rule-based persistence checks (Phase 5) over the
+/// already-collected Phase 3 startup/scheduled-task data, enriched with a
+/// cached `WinVerifyTrust` signature verdict per flagged executable — see
+/// `system_pulse_win::security_posture::check_persistence`. On-demand
+/// (Cold-cadence source data, deliberately not folded into a collector's
+/// own cadence) so a user opening the Security panel always sees a check
+/// run against the freshest available startup/task lists.
+#[tauri::command]
+pub fn get_persistence_findings(state: State<'_, AppState>) -> Vec<PersistenceFinding> {
+    let startup = state
+        .telemetry
+        .latest_startup()
+        .and_then(|s| s.value)
+        .unwrap_or_default();
+    let tasks = state
+        .telemetry
+        .latest_scheduled_tasks()
+        .and_then(|s| s.value)
+        .unwrap_or_default();
+    system_pulse_win::security_posture::check_persistence(
+        &startup,
+        &tasks,
+        &system_pulse_win::security_posture::verify_signature,
+    )
 }
 
 #[tauri::command]

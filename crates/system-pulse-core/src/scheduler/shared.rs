@@ -16,10 +16,10 @@ use parking_lot::Mutex;
 
 use crate::model::Sampled;
 use crate::types::{
-    ConnectionSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, GpuSnapshot,
-    InstalledSoftware, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot,
-    SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
-    WindowsInternalState,
+    ConnectionSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, EventLogSnapshot,
+    GpuSnapshot, InstalledSoftware, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot,
+    SecurityPostureSnapshot, SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem,
+    StorageHealthSnapshot, WindowsInternalState,
 };
 
 #[derive(Default)]
@@ -54,6 +54,9 @@ pub(crate) struct LatestSections {
     // --- Phase 4: all on-demand, none folded into the hot frame ---
     pub storage_health: Option<Sampled<Vec<StorageHealthSnapshot>>>,
     pub sensor_bridge: Option<Sampled<SensorBridgeSnapshot>>,
+    // --- Phase 5: all on-demand, none folded into the hot frame ---
+    pub event_log: Option<Sampled<EventLogSnapshot>>,
+    pub security_posture: Option<Sampled<SecurityPostureSnapshot>>,
 }
 
 pub(crate) type SharedSections = std::sync::Arc<Mutex<LatestSections>>;

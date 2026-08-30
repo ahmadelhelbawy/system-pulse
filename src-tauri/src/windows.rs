@@ -23,12 +23,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     // be resolved: telemetry must keep working live either way, matching
     // `Scheduler::spawn`'s own "history is diagnostic evidence, not
     // load-bearing" stance on a failed-to-open database.
-    let history_db_path = app
-        .path()
-        .app_data_dir()
-        .map(|dir| dir.join("history.sqlite3"))
-        .ok();
-    telemetry.spawn(system_pulse_win::all_collectors(), history_db_path);
+    let app_data_dir = app.path().app_data_dir().ok();
+    let history_db_path = app_data_dir.as_ref().map(|dir| dir.join("history.sqlite3"));
+    telemetry.spawn(
+        system_pulse_win::all_collectors(app_data_dir.as_deref()),
+        history_db_path,
+    );
 
     app.manage(AppState {
         settings: Arc::new(std::sync::Mutex::new(settings.clone())),

@@ -41,6 +41,18 @@ pub struct TelemetrySnapshot {
     /// (Phase 2) rather than the raw per-tick alert list `health::analyze`
     /// produces — see `crate::alerts::AlertEngine`.
     pub health: HealthScore,
+    /// Statistically unusual readings (Phase 5) — deliberately separate
+    /// from `health.alerts`: these flag a deviation from this machine's own
+    /// recent pattern, not a crossed absolute threshold, and folding them
+    /// into the health score would conflate two different kinds of signal.
+    /// Debounced the same way health alerts are — see
+    /// `crate::analysis::anomaly` and `crate::alerts::HysteresisEngine`.
+    /// `#[serde(default)]` so the Phase 0-4 replay fixtures (captured
+    /// before this field existed) still deserialize, as an empty list —
+    /// the honest answer, since Phase 5 anomaly detection didn't exist
+    /// when they were recorded.
+    #[serde(default)]
+    pub anomalies: Vec<HealthAlert>,
 }
 
 /// Raw, cumulative CPU tick counters used to derive utilization.
@@ -525,6 +537,174 @@ pub struct SensorBridgeSnapshot {
     pub readings: Vec<SensorReading>,
 }
 
+/// `EVT_SYSTEM_PROPERTY_ID(EvtSystemLevel)`'s value, mapped to a closed
+/// enum — Windows event levels 0 (LogAlways) and 4 (Information) both
+/// collapse to `Information` here since neither carries extra meaning for
+/// this app; an unrecognized value also falls back to `Information` rather
+/// than guessing at severity.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum EventLevel {
+    Critical,
+    Error,
+    Warning,
+    Information,
+    Verbose,
+}
+
+/// One Windows Event Log record (Phase 5) — see
+/// `system-pulse-win::event_log`. `message` is best-effort (`EvtFormatMessage`
+/// against the provider's own metadata) and `None` when that lookup fails
+/// for any reason (provider metadata absent, message table missing) —
+/// never a fabricated or truncated guess at what the event meant.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EventLogEntry {
+    /// e.g. `"Application"`, `"System"`, `"Security"`.
+    pub channel: String,
+    pub record_id: u64,
+    pub event_id: u32,
+    pub level: EventLevel,
+    pub provider: String,
+    pub time_created: UnixMillis,
+    pub message: Option<String>,
+}
+
+/// The bounded, incrementally-read event log window for one collection
+/// cycle (Phase 5). `dropped` is the ring's own overflow counter (see
+/// `crate::transport::BoundedRing`) — visible rather than a silent gap, per
+/// the master plan's backpressure rule for event-like topics.
+/// `security_included` is `false` whenever the Security channel was
+/// skipped because the process isn't elevated: the collector still reports
+/// `Availability::Ok` for the Application/System channels it *could* read
+/// rather than failing the whole snapshot over one gated channel.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EventLogSnapshot {
+    /// Oldest first — the order `BoundedRing` iterates and the order new
+    /// records were discovered in.
+    pub entries: Vec<EventLogEntry>,
+    pub dropped: u64,
+    pub security_included: bool,
+}
+
+/// `INetFwPolicy2`'s per-profile enabled state (Phase 5). `Unknown` is a
+/// real, distinct value — reported when the profile's own COM call fails —
+/// never coerced to `Off` (which would fabricate a security-relevant
+/// negative) or `On` (which would hide a real problem).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FirewallProfileState {
+    On,
+    Off,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FirewallStatus {
+    pub domain: FirewallProfileState,
+    pub private: FirewallProfileState,
+    pub public: FirewallProfileState,
+}
+
+/// One `WscGetSecurityProviderHealth` provider's reported health (Phase 5)
+/// — `health` is the WSC API's own word (`"good"` | `"notMonitored"` |
+/// `"poor"` | `"snooze"`), passed through rather than reinterpreted, since
+/// WSC (not this app) is the authority on what "good" means for a given AV
+/// product.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecurityProviderStatus {
+    /// "antivirus" | "autoUpdate" — which WSC provider category this is;
+    /// firewall health is reported via `FirewallStatus` instead, since WSC's
+    /// firewall bit only says "some profile is protected," while
+    /// `INetFwPolicy2` gives the real per-profile breakdown.
+    pub kind: String,
+    pub health: String,
+}
+
+/// One deterministic, rule-based finding from the persistence checks
+/// (Phase 5) — an autostart entry or scheduled task whose target looks
+/// suspicious (missing file, unusual location, an unsigned binary). `signed`
+/// is `None` whenever `WinVerifyTrust` wasn't run or couldn't reach a
+/// verdict — never coerced to `Some(false)`, which would fabricate "this is
+/// definitely unsigned" from "this app didn't check."
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PersistenceFinding {
+    pub id: String,
+    pub severity: Severity,
+    pub title: String,
+    pub detail: String,
+    pub path: Option<String>,
+    pub signed: Option<bool>,
+}
+
+/// Security Center + firewall + Secure Boot + persistence checks for one
+/// collection cycle (Phase 5). Persistence findings are computed on demand
+/// from already-collected Phase 3 data (see `system-pulse-win::security_posture`'s
+/// module doc) rather than by this collector itself, so they aren't part of
+/// this snapshot — see the `get_persistence_findings` IPC command instead.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecurityPostureSnapshot {
+    pub firewall: Option<FirewallStatus>,
+    pub antivirus: Vec<SecurityProviderStatus>,
+    /// `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State\UEFISecureBootEnabled`
+    /// — `None` on non-UEFI/legacy-BIOS systems where the key doesn't exist
+    /// at all, distinct from `Some(false)` (UEFI present, Secure Boot off).
+    pub secure_boot_enabled: Option<bool>,
+}
+
+/// One historical sample cited as evidence for a [`DiagnosticFinding`] —
+/// literally a `query_history` result point, never a synthesized or
+/// interpolated value.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EvidencePoint {
+    pub ts_ms: UnixMillis,
+    pub value: f64,
+}
+
+/// A correlated diagnostic finding (Phase 5) — an active alert enriched
+/// with the actual historical evidence behind it (see
+/// `crate::analysis::diagnostics::correlate`). `evidence` is empty and
+/// `duration_ms` is `0` whenever history has no data for this finding's
+/// series (history disabled, or too new to have any samples yet) — the
+/// finding is still reported (it's real right now), but nothing about its
+/// past is invented.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DiagnosticFinding {
+    /// Same identity as the alert this was correlated from.
+    pub id: String,
+    pub severity: Severity,
+    pub title: String,
+    pub detail: String,
+    /// Associated process id when the underlying alert concerns a single
+    /// process — process-category alerts already carry their own evidence
+    /// (the process name/id is the finding), so `evidence` is empty for
+    /// these rather than a fabricated historical lookup this app has no
+    /// per-process history to back.
+    pub pid: Option<u32>,
+    /// Milliseconds this condition has been continuously present in
+    /// recorded history, estimated from the oldest evidence point still at
+    /// or above the alert's own threshold. `0` when there's no evidence.
+    pub duration_ms: i64,
+    pub evidence: Vec<EvidencePoint>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,6 +773,7 @@ mod tests {
                     pid: None,
                 }],
             },
+            anomalies: vec![],
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();

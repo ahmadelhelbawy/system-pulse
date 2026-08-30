@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::alerts::AlertEngine;
+use crate::analysis::anomaly::{AnomalyDetector, AnomalyInput};
 use crate::collector::{CollectCtx, Collector, CollectorOutput, CpuCollector, MemoryCollector};
 use crate::health::{analyze, HealthInput};
 use crate::history::{HistorySample, HistoryWriter};
@@ -16,6 +17,12 @@ use crate::model::{Sampled, UnixMillis};
 use crate::settings::{MAX_REFRESH_INTERVAL_MS, MIN_REFRESH_INTERVAL_MS};
 use crate::transport::Mailbox;
 use crate::types::TelemetrySnapshot;
+
+/// Anomaly hysteresis debounces over more consecutive ticks than health
+/// alerts (`alerts::HYSTERESIS_TICKS` = 3): statistical noise is more
+/// common than a genuine step change, so a longer confirmation window
+/// keeps a single noisy tick from surfacing as an anomaly finding.
+const ANOMALY_HYSTERESIS_TICKS: u32 = 5;
 
 use super::shared::SharedSections;
 use super::wake::WakeSignal;
@@ -29,6 +36,8 @@ pub(crate) struct HotLoop {
     memory: MemoryCollector,
     cpu_history: Vec<f32>,
     alert_engine: AlertEngine,
+    anomaly_detector: AnomalyDetector,
+    anomaly_engine: AlertEngine,
     history: Option<Arc<HistoryWriter>>,
     sections: SharedSections,
     frame_out: Mailbox<TelemetrySnapshot>,
@@ -58,6 +67,8 @@ impl HotLoop {
             memory,
             cpu_history: Vec::with_capacity(CPU_HISTORY_LEN),
             alert_engine: AlertEngine::new(),
+            anomaly_detector: AnomalyDetector::new(),
+            anomaly_engine: AlertEngine::with_ticks(ANOMALY_HYSTERESIS_TICKS),
             history,
             sections,
             frame_out,
@@ -109,7 +120,6 @@ impl HotLoop {
             }
 
             let snapshot = self.assemble(ctx.wall_now, cpu, memory);
-            self.record_history(&snapshot);
             self.frame_out.put(snapshot);
 
             let interval = Duration::from_millis(
@@ -121,15 +131,20 @@ impl HotLoop {
         }
     }
 
-    /// Best-effort: absent when no history path was configured, or the
-    /// writer's channel is full (in which case `record` itself already
-    /// counts the drop — see `history::HistoryWriter`). Never blocks the
-    /// hot loop either way.
-    fn record_history(&self, snapshot: &TelemetrySnapshot) {
-        let Some(writer) = &self.history else {
-            return;
-        };
-        let gpu_percent = snapshot.gpu.value.as_ref().and_then(|gpus| {
+    /// The seven fixed headline series both the history writer and the
+    /// anomaly detector need — built once per tick from the pieces
+    /// `assemble` already has in hand, so the two consumers can never
+    /// disagree about what "this tick's CPU reading" was.
+    #[allow(clippy::too_many_arguments)]
+    fn build_sample(
+        as_of: UnixMillis,
+        cpu: &Sampled<crate::types::CpuSnapshot>,
+        memory: &Sampled<crate::types::MemorySnapshot>,
+        disk_io: &Sampled<crate::types::DiskIoSnapshot>,
+        networks: &Sampled<Vec<crate::types::NetworkSnapshot>>,
+        gpu: &Sampled<Vec<crate::types::GpuSnapshot>>,
+    ) -> HistorySample {
+        let gpu_percent = gpu.value.as_ref().and_then(|gpus| {
             let readings: Vec<f32> = gpus.iter().filter_map(|g| g.utilization_percent).collect();
             if readings.is_empty() {
                 None
@@ -137,30 +152,35 @@ impl HotLoop {
                 Some(readings.iter().sum::<f32>() as f64 / readings.len() as f64)
             }
         });
-        let net_download_rate = snapshot
-            .networks
+        let net_download_rate = networks
             .value
             .as_ref()
             .map(|nets| nets.iter().map(|n| n.download_rate).sum());
-        let net_upload_rate = snapshot
-            .networks
+        let net_upload_rate = networks
             .value
             .as_ref()
             .map(|nets| nets.iter().map(|n| n.upload_rate).sum());
-        writer.record(HistorySample {
-            ts_ms: snapshot.timestamp_ms,
-            cpu_percent: snapshot.cpu.value.as_ref().map(|c| c.total_percent as f64),
-            mem_used_percent: snapshot
-                .memory
-                .value
-                .as_ref()
-                .map(|m| m.used_percent as f64),
+        HistorySample {
+            ts_ms: as_of,
+            cpu_percent: cpu.value.as_ref().map(|c| c.total_percent as f64),
+            mem_used_percent: memory.value.as_ref().map(|m| m.used_percent as f64),
             gpu_percent,
-            disk_read_rate: snapshot.disk_io.value.as_ref().map(|d| d.read_rate),
-            disk_write_rate: snapshot.disk_io.value.as_ref().map(|d| d.write_rate),
+            disk_read_rate: disk_io.value.as_ref().map(|d| d.read_rate),
+            disk_write_rate: disk_io.value.as_ref().map(|d| d.write_rate),
             net_download_rate,
             net_upload_rate,
-        });
+        }
+    }
+
+    /// Best-effort: absent when no history path was configured, or the
+    /// writer's channel is full (in which case `record` itself already
+    /// counts the drop — see `history::HistoryWriter`). Never blocks the
+    /// hot loop either way.
+    fn record_history(&self, sample: HistorySample) {
+        let Some(writer) = &self.history else {
+            return;
+        };
+        writer.record(sample);
     }
 
     fn assemble(
@@ -247,6 +267,19 @@ impl HotLoop {
         let stabilized = self.alert_engine.evaluate(candidates);
         let health = crate::analysis::score(&stabilized);
 
+        let sample = Self::build_sample(as_of, &cpu, &memory, &disk_io, &networks, &gpu);
+        self.record_history(sample);
+        let anomaly_candidates = self.anomaly_detector.detect(&AnomalyInput {
+            cpu_percent: sample.cpu_percent,
+            mem_used_percent: sample.mem_used_percent,
+            gpu_percent: sample.gpu_percent,
+            disk_read_rate: sample.disk_read_rate,
+            disk_write_rate: sample.disk_write_rate,
+            net_download_rate: sample.net_download_rate,
+            net_upload_rate: sample.net_upload_rate,
+        });
+        let anomalies = self.anomaly_engine.evaluate(anomaly_candidates);
+
         TelemetrySnapshot {
             timestamp_ms: as_of,
             uptime_secs: sysinfo::System::uptime(),
@@ -259,6 +292,7 @@ impl HotLoop {
             processes,
             windows_internal,
             health,
+            anomalies,
         }
     }
 }

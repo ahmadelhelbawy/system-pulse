@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
-import type { Sampled } from "../lib/contracts";
+import type {
+  DiagnosticFinding,
+  HealthAlert,
+  PersistenceFinding,
+  Sampled,
+} from "../lib/contracts";
 import { api } from "../lib/ipc";
 import { availabilityDetail, availabilityLabel } from "../lib/availability";
+import { useStore } from "../state/store";
 import EmptyState from "./common/EmptyState";
 
 type SubTab =
@@ -11,7 +17,10 @@ type SubTab =
   | "software"
   | "tasks"
   | "storage"
-  | "sensors";
+  | "sensors"
+  | "events"
+  | "security"
+  | "diagnostics";
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "services", label: "Services" },
@@ -21,6 +30,9 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "tasks", label: "Tasks" },
   { id: "storage", label: "Storage" },
   { id: "sensors", label: "Sensors" },
+  { id: "events", label: "Events" },
+  { id: "security", label: "Security" },
+  { id: "diagnostics", label: "Diagnostics" },
 ];
 
 /**
@@ -70,6 +82,9 @@ export default function SystemPanel() {
       {tab === "tasks" && <TasksTable query={query} />}
       {tab === "storage" && <StorageTable query={query} />}
       {tab === "sensors" && <SensorsTable />}
+      {tab === "events" && <EventsTable query={query} />}
+      {tab === "security" && <SecurityTab />}
+      {tab === "diagnostics" && <DiagnosticsTab />}
     </div>
   );
 }
@@ -443,6 +458,218 @@ function SensorsTable() {
               <td className="ptable__name">{r.name}</td>
               <td className="ptable__muted">{r.kind}</td>
               <td className="mono">{r.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EventsTable({ query }: { query: string }) {
+  const sampled = useOnDemandSingle(api.getEventLog);
+  if (sampled === "loading") return <EmptyState title="Loading event log…" />;
+  if (sampled == null) return <EmptyState title="No data yet" />;
+  if (sampled.availability.state !== "ok" || !sampled.value) {
+    return (
+      <EmptyState
+        title={availabilityLabel(sampled.availability)}
+        detail={availabilityDetail(sampled.availability)}
+      />
+    );
+  }
+  const { entries, dropped, securityIncluded } = sampled.value;
+  const rows = filterRows(
+    entries,
+    query,
+    (r, q) =>
+      r.provider.toLowerCase().includes(q) ||
+      (r.message ?? "").toLowerCase().includes(q) ||
+      r.channel.toLowerCase().includes(q),
+  );
+  return (
+    <div className="ptable-wrap">
+      <p className="ptable__muted">
+        {securityIncluded
+          ? "Security channel included (elevated)."
+          : "Security channel not included — restart elevated to include it."}
+        {dropped > 0 && ` ${dropped} older event(s) dropped from this in-memory window.`}
+      </p>
+      <table className="ptable">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Channel</th>
+            <th>Level</th>
+            <th>Provider</th>
+            <th className="ptable__num">ID</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows
+            .slice()
+            .reverse()
+            .map((r, i) => (
+              <tr key={`${r.channel}-${r.recordId}-${i}`}>
+                <td className="ptable__muted">{new Date(r.timeCreated).toLocaleString()}</td>
+                <td className="ptable__muted">{r.channel}</td>
+                <td className="mono">{r.level}</td>
+                <td className="ptable__name">{r.provider}</td>
+                <td className="mono">{r.eventId}</td>
+                <td className="ptable__muted" title={r.message ?? undefined}>
+                  {r.message ? r.message.split("\n")[0] : "—"}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && <EmptyState title="No matching events" />}
+    </div>
+  );
+}
+
+function SecurityTab() {
+  const posture = useOnDemandSingle(api.getSecurityPosture);
+  const [findings, setFindings] = useState<PersistenceFinding[] | "loading">("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getPersistenceFindings()
+      .then((f) => {
+        if (!cancelled) setFindings(f);
+      })
+      .catch((e) => console.error("persistence findings fetch failed", e));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (posture === "loading") return <EmptyState title="Loading security posture…" />;
+  if (posture == null) return <EmptyState title="No data yet" />;
+  if (posture.availability.state !== "ok" || !posture.value) {
+    return (
+      <EmptyState
+        title={availabilityLabel(posture.availability)}
+        detail={availabilityDetail(posture.availability)}
+      />
+    );
+  }
+  const { firewall, antivirus, secureBootEnabled } = posture.value;
+
+  return (
+    <div className="ptable-wrap">
+      <table className="ptable">
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="ptable__name">Firewall — Domain</td>
+            <td className="mono">{firewall?.domain ?? "—"}</td>
+          </tr>
+          <tr>
+            <td className="ptable__name">Firewall — Private</td>
+            <td className="mono">{firewall?.private ?? "—"}</td>
+          </tr>
+          <tr>
+            <td className="ptable__name">Firewall — Public</td>
+            <td className="mono">{firewall?.public ?? "—"}</td>
+          </tr>
+          {antivirus.map((a, i) => (
+            <tr key={`${a.kind}-${i}`}>
+              <td className="ptable__name">{a.kind}</td>
+              <td className="mono">{a.health}</td>
+            </tr>
+          ))}
+          <tr>
+            <td className="ptable__name">Secure Boot</td>
+            <td className="mono">
+              {secureBootEnabled == null ? "N/A" : secureBootEnabled ? "Enabled" : "Disabled"}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p className="ptable__muted" style={{ marginTop: "1rem" }}>
+        Persistence checks (startup entries, scheduled tasks)
+      </p>
+      {findings === "loading" && <EmptyState title="Checking persistence entries…" />}
+      {findings !== "loading" && findings.length === 0 && (
+        <EmptyState title="No suspicious persistence entries found" />
+      )}
+      {findings !== "loading" && findings.length > 0 && (
+        <table className="ptable">
+          <thead>
+            <tr>
+              <th>Finding</th>
+              <th>Detail</th>
+              <th>Signed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {findings.map((f) => (
+              <tr key={f.id}>
+                <td className="ptable__name">{f.title}</td>
+                <td className="ptable__muted">{f.detail}</td>
+                <td className="mono">
+                  {f.signed == null ? "Unknown" : f.signed ? "Yes" : "No"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function DiagnosticsTab() {
+  const snapshot = useStore((s) => s.snapshot);
+  const [findings, setFindings] = useState<DiagnosticFinding[] | "loading">("loading");
+
+  useEffect(() => {
+    if (!snapshot) return;
+    const alerts: HealthAlert[] = [...snapshot.health.alerts, ...snapshot.anomalies];
+    api
+      .getDiagnostics(alerts)
+      .then(setFindings)
+      .catch((e) => console.error("diagnostics fetch failed", e));
+    // Only re-run when the panel mounts with a snapshot, not on every 1Hz
+    // tick — this is an on-demand correlation, not a live subscription.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot != null]);
+
+  if (!snapshot) return <EmptyState title="Waiting for telemetry…" />;
+  if (findings === "loading") return <EmptyState title="Correlating active alerts…" />;
+  if (findings.length === 0) {
+    return <EmptyState title="No active alerts to correlate" />;
+  }
+
+  return (
+    <div className="ptable-wrap">
+      <table className="ptable">
+        <thead>
+          <tr>
+            <th>Finding</th>
+            <th>Detail</th>
+            <th className="ptable__num">Duration</th>
+            <th className="ptable__num">Evidence points</th>
+          </tr>
+        </thead>
+        <tbody>
+          {findings.map((f) => (
+            <tr key={f.id}>
+              <td className="ptable__name">{f.title}</td>
+              <td className="ptable__muted">{f.detail}</td>
+              <td className="mono">
+                {f.durationMs > 0 ? `${Math.round(f.durationMs / 1000)}s` : "—"}
+              </td>
+              <td className="mono">{f.evidence.length}</td>
             </tr>
           ))}
         </tbody>

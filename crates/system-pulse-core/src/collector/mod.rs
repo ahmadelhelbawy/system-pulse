@@ -30,10 +30,10 @@ use ts_rs::TS;
 use crate::model::UnixMillis;
 use crate::model::{Availability, Sampled};
 use crate::types::{
-    ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot, GpuSnapshot,
-    InstalledSoftware, MemorySnapshot, NetworkSnapshot, ProcessSnapshot, ScheduledTaskSnapshot,
-    SensorBridgeSnapshot, ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot,
-    WindowsInternalState,
+    ConnectionSnapshot, CpuSnapshot, DiskIoSnapshot, DiskSnapshot, DriverSnapshot,
+    EventLogSnapshot, GpuSnapshot, InstalledSoftware, MemorySnapshot, NetworkSnapshot,
+    ProcessSnapshot, ScheduledTaskSnapshot, SecurityPostureSnapshot, SensorBridgeSnapshot,
+    ServiceSnapshot, SmbiosInfo, StartupItem, StorageHealthSnapshot, WindowsInternalState,
 };
 
 /// Identifies a collector for scheduling, logging, and capability reports.
@@ -58,6 +58,8 @@ pub enum CollectorId {
     ScheduledTasks,
     StorageHealth,
     SensorBridge,
+    EventLog,
+    SecurityPosture,
 }
 
 /// How often a collector should run, and on which thread.
@@ -160,6 +162,18 @@ pub enum CollectorOutput {
     /// fact of the external tool already running; never installs or
     /// launches anything.
     SensorBridge(Sampled<SensorBridgeSnapshot>),
+    /// `EvtQuery`/`EvtNext` with bookmarked incremental reads (Phase 5) —
+    /// implemented in `system-pulse-win`. Bounded, dropped-count-visible;
+    /// the Security channel is gated on elevation inside the collector
+    /// itself (`EventLogSnapshot::security_included`), not by this
+    /// collector's own `required_privilege()`, since Application/System
+    /// stay readable either way.
+    EventLog(Sampled<EventLogSnapshot>),
+    /// Windows Security Center + firewall + Secure Boot (Phase 5) —
+    /// implemented in `system-pulse-win`. Defensive persistence checks are
+    /// computed on demand from already-collected Phase 3 data instead of
+    /// living on this collector — see `system-pulse-win::security_posture`.
+    SecurityPosture(Sampled<SecurityPostureSnapshot>),
 }
 
 /// A pluggable source of telemetry.

@@ -25,6 +25,7 @@ function minimalSnapshot(timestampMs: number): TelemetrySnapshot {
     processes: unavailable,
     windowsInternal: unavailable,
     health: { overall: 100, domains: [], alerts: [] },
+    anomalies: [],
   };
 }
 

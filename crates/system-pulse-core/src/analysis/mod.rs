@@ -1,11 +1,12 @@
-//! Health scoring (Phase 2). Deterministic and explainable by construction
-//! — a fixed per-severity point penalty per active alert, nothing learned
-//! or fitted — matching the master plan's "detection authority" rule that
-//! carries forward to Phase 5: an optional future LLM layer may explain a
-//! score, it may never compute one.
-//!
-//! Anomaly detection (robust statistics over `crate::history`) and
-//! diagnostics correlation are Phase 5 scope and don't live here yet.
+//! Health scoring (Phase 2), statistical anomaly detection, and diagnostics
+//! correlation (Phase 5). Deterministic and explainable by construction —
+//! fixed point penalties, robust statistics, and rule-based correlation,
+//! nothing learned or fitted — matching the master plan's "detection
+//! authority" rule: an optional future LLM layer may explain a finding, it
+//! may never compute or suppress one.
+
+pub mod anomaly;
+pub mod diagnostics;
 
 use crate::types::{DomainHealth, HealthAlert, HealthScore, Severity};
 

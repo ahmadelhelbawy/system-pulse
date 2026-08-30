@@ -172,6 +172,12 @@ fn publish(sections: &SharedSections, output: CollectorOutput) {
         CollectorOutput::SensorBridge(s) => {
             sections.sensor_bridge = Some(s);
         }
+        CollectorOutput::EventLog(s) => {
+            sections.event_log = Some(s);
+        }
+        CollectorOutput::SecurityPosture(s) => {
+            sections.security_posture = Some(s);
+        }
         // Hot-only outputs never originate from a worker loop.
         CollectorOutput::Cpu(_) | CollectorOutput::Memory(_) => {}
     }

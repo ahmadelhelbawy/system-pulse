@@ -267,6 +267,18 @@ impl Scheduler {
         self.sections.lock().sensor_bridge.clone()
     }
 
+    pub fn latest_event_log(
+        &self,
+    ) -> Option<crate::model::Sampled<crate::types::EventLogSnapshot>> {
+        self.sections.lock().event_log.clone()
+    }
+
+    pub fn latest_security_posture(
+        &self,
+    ) -> Option<crate::model::Sampled<crate::types::SecurityPostureSnapshot>> {
+        self.sections.lock().security_posture.clone()
+    }
+
     /// Queries recorded history. Opens its own short-lived read connection
     /// to the writer's database file rather than sharing the writer's
     /// connection (WAL mode makes this safe — see `crate::history`'s
