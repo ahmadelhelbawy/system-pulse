@@ -89,6 +89,24 @@ jobs:
       # your $PATH" (confirmed via a real failed run, 33377747679).
       - uses: ilammy/msvc-dev-cmd@v1
 
+      # Belt-and-suspenders: `ilammy/msvc-dev-cmd` reported finding Visual
+      # Studio and setting PATH to include the Windows Kits `bin\...\x64`
+      # directory, but tauri-winres still failed with "Are you sure you have
+      # RC.EXE in your $PATH ... or $RC is set?" (confirmed via a real failed
+      # run, 33385259179) — so rely on the `$RC` check it documents directly
+      # instead of trusting PATH propagation across steps.
+      - name: Locate RC.EXE and export it for tauri-winres
+        shell: pwsh
+        run: |
+          $rc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "rc.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\x64\\" } |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $rc) {
+            throw "rc.exe not found under Windows Kits 10 bin directory"
+          }
+          Write-Host "Found rc.exe at $rc"
+          echo "RC=$rc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # `tauri build` builds the frontend (beforeBuildCommand), compiles
       # the app in release mode with the `custom-protocol` feature so the
       # embedded dist/ is used instead of a dev server, and produces the
