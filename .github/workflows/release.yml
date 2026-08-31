@@ -89,21 +89,24 @@ jobs:
       # your $PATH" (confirmed via a real failed run, 33377747679).
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # Belt-and-suspenders, round 2: `ilammy/msvc-dev-cmd` reported finding
-      # Visual Studio and setting PATH to include the Windows Kits
-      # `bin\...\x64` directory, and explicitly setting `$RC` to a confirmed
-      # real rc.exe path (both verified present in the job's own env dump)
-      # *still* didn't stop tauri-winres failing with the same "RC.EXE in
-      # your $PATH ... or $RC is set?" panic (confirmed via two separate real
-      # failed runs, 33377747679 and 33385259179) — so this covers both
-      # remaining explanations at once: (a) `Out-File -Encoding utf8` on
-      # PowerShell 7 writes a UTF-8 BOM, which would silently corrupt the
-      # `RC` key's name in `$GITHUB_ENV`'s NAME=value parsing (fixed here via
-      # `utf8NoBOM`); (b) `embed-resource`'s own `$RC` handling has some
-      # other gap — covered by *also* adding rc.exe's directory to
-      # `$GITHUB_PATH`, the exact mechanism already proven reliable earlier
-      # in this same job for `dtolnay/rust-toolchain` and `pnpm`.
-      - name: Locate RC.EXE and put it on PATH + $RC for tauri-winres
+      # Reading rust-embed-resource's actual source (windows_msvc.rs,
+      # compile_resource): the "Are you sure you have RC.EXE in your $PATH
+      # ... or $RC is set?" message fires *only* when `Command::new(rc)
+      # .status()` fails to spawn — a plain OS-level "couldn't launch this
+      # process" — never for a compile error inside rc.exe (that's a
+      # different message entirely, "RC.EXE failed to compile..."). Two
+      # earlier attempts confirmed a real rc.exe at this exact path via
+      # `Get-ChildItem`, and confirmed `$RC` correctly reached the job's own
+      # env dump — yet spawning it still failed (runs 33377747679,
+      # 33385259179, 33388188772). Rather than trust `$GITHUB_ENV`/PATH
+      # propagation across steps and into whatever nested process tree
+      # `pnpm tauri build` spawns, pass the located path via a step output
+      # bound directly into the *build step's own* `env:` block below — the
+      # least ambiguous mechanism GitHub Actions has for this, guaranteed to
+      # be in that exact process's environment with no cross-step timing or
+      # encoding involved.
+      - name: Locate RC.EXE
+        id: locate_rc
         shell: pwsh
         run: |
           $rc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "rc.exe" -ErrorAction SilentlyContinue |
@@ -113,14 +116,19 @@ jobs:
             throw "rc.exe not found under Windows Kits 10 bin directory"
           }
           Write-Host "Found rc.exe at $rc"
-          Add-Content -Path $env:GITHUB_ENV -Value "RC=$rc" -Encoding utf8NoBOM
-          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $rc -Parent) -Encoding utf8NoBOM
+          # Prove it's genuinely launchable in this exact context, since a
+          # spawn failure (not a missing file) is what tauri-winres reports.
+          & $rc /? | Out-Null
+          Write-Host "rc.exe exit code: $LASTEXITCODE"
+          "rc_path=$rc" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8NoBOM
 
       # `tauri build` builds the frontend (beforeBuildCommand), compiles
       # the app in release mode with the `custom-protocol` feature so the
       # embedded dist/ is used instead of a dev server, and produces the
       # NSIS installer per src-tauri/tauri.conf.json's bundle config.
       - name: Build System Pulse (release + NSIS installer)
+        env:
+          RC: ${{ steps.locate_rc.outputs.rc_path }}
         run: pnpm tauri build
 
       - name: Upload executable
