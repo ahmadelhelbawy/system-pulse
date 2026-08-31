@@ -17,6 +17,23 @@ fn main() {
             "DIAG: bare Command::new(\"rc.exe\").status() (PATH lookup) = {:?}",
             bare
         );
+
+        // Replicate embed-resource's exact invocation shape: `/fo <out>.lib
+        // /I <out_dir> <resource.rc>` against a real, minimal .rc file in
+        // OUT_DIR, to see whether it's specifically these extra arguments
+        // (not the executable path) that break spawning.
+        let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());
+        let fake_rc = std::path::Path::new(&out_dir).join("diag_test.rc");
+        let fake_lib = std::path::Path::new(&out_dir).join("diag_test.lib");
+        let _ = std::fs::write(&fake_rc, "// empty\n");
+        let replicated = std::process::Command::new(&rc)
+            .args(["/fo", fake_lib.to_str().unwrap(), "/I", &out_dir])
+            .arg(&fake_rc)
+            .status();
+        eprintln!(
+            "DIAG: replicated embed-resource invocation = {:?}",
+            replicated
+        );
     }
     tauri_build::build()
 }
