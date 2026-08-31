@@ -80,32 +80,22 @@ jobs:
       - name: Windows-target check — system-pulse-win
         run: cargo check -p system-pulse-win --target x86_64-pc-windows-msvc
 
-      # `tauri-winres` (pulled in by `tauri-build`) shells out to `rc.exe` to
-      # embed the icon/version resource into the .exe. It isn't on PATH in
-      # GitHub's default PowerShell job environment — only an activated MSVC
-      # developer environment puts it there — so the earlier Rust
-      # test/clippy steps succeeded (rustc locates cl.exe/link.exe itself)
-      # while the release build failed with "Are you sure you have RC.EXE in
-      # your $PATH" (confirmed via a real failed run, 33377747679).
-      - uses: ilammy/msvc-dev-cmd@v1
-
-      # Reading rust-embed-resource's actual source (windows_msvc.rs,
-      # compile_resource): the "Are you sure you have RC.EXE in your $PATH
-      # ... or $RC is set?" message fires *only* when `Command::new(rc)
-      # .status()` fails to spawn — a plain OS-level "couldn't launch this
-      # process" — never for a compile error inside rc.exe (that's a
-      # different message entirely, "RC.EXE failed to compile..."). Two
-      # earlier attempts confirmed a real rc.exe at this exact path via
-      # `Get-ChildItem`, and confirmed `$RC` correctly reached the job's own
-      # env dump — yet spawning it still failed (runs 33377747679,
-      # 33385259179, 33388188772). Rather than trust `$GITHUB_ENV`/PATH
-      # propagation across steps and into whatever nested process tree
-      # `pnpm tauri build` spawns, pass the located path via a step output
-      # bound directly into the *build step's own* `env:` block below — the
-      # least ambiguous mechanism GitHub Actions has for this, guaranteed to
-      # be in that exact process's environment with no cross-step timing or
-      # encoding involved.
-      - name: Locate RC.EXE
+      # Root cause of every earlier RC.EXE attempt, finally found by reading
+      # .cargo/config.toml: its [env] table unconditionally sets
+      # `RC_x86_64-pc-windows-msvc = ".tools/llvm-rc"` (a WSL2-only stub, for
+      # headless `cargo check --target x86_64-pc-windows-msvc` on the Linux
+      # dev machine) — and since that file is committed, it applies on this
+      # Windows runner too. embed-resource's env_target_and_rc() checks
+      # `RC_<target>` (exact, with hyphens) *first*, before falling back to
+      # `RC_<target_with_underscores>` then bare `RC` — so every previous fix
+      # here, which only ever set plain `RC`, was silently pre-empted by that
+      # stub path (which doesn't exist as a real file on Windows), causing
+      # the literal "Are you sure you have RC.EXE in your $PATH ... or $RC is
+      # set?" spawn failure regardless of PATH/RC/step-output plumbing.
+      # Cargo's [env] entries apply only when the OS environment doesn't
+      # already have that name set (no `force = true` here), so exporting
+      # the *same* `RC_x86_64-pc-windows-msvc` key as a real OS env var wins.
+      - name: Locate RC.EXE and export it under the exact key cargo checks first
         id: locate_rc
         shell: pwsh
         run: |
@@ -116,10 +106,6 @@ jobs:
             throw "rc.exe not found under Windows Kits 10 bin directory"
           }
           Write-Host "Found rc.exe at $rc"
-          # Prove it's genuinely launchable in this exact context, since a
-          # spawn failure (not a missing file) is what tauri-winres reports.
-          & $rc /? | Out-Null
-          Write-Host "rc.exe exit code: $LASTEXITCODE"
           "rc_path=$rc" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8NoBOM
 
       # `tauri build` builds the frontend (beforeBuildCommand), compiles
@@ -128,7 +114,7 @@ jobs:
       # NSIS installer per src-tauri/tauri.conf.json's bundle config.
       - name: Build System Pulse (release + NSIS installer)
         env:
-          RC: ${{ steps.locate_rc.outputs.rc_path }}
+          RC_x86_64-pc-windows-msvc: ${{ steps.locate_rc.outputs.rc_path }}
         run: pnpm tauri build
 
       - name: Upload executable
