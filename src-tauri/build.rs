@@ -8,5 +8,15 @@ fn main() {
     eprintln!("DIAG: RC = {:?}", std::env::var("RC"));
     eprintln!("DIAG: TARGET = {:?}", std::env::var("TARGET"));
     eprintln!("DIAG: PATH = {:?}", std::env::var("PATH"));
+    if let Ok(rc) = std::env::var("RC") {
+        eprintln!("DIAG: exists() = {:?}", std::path::Path::new(&rc).exists());
+        let direct = std::process::Command::new(&rc).arg("/?").status();
+        eprintln!("DIAG: direct Command::new(RC).status() = {:?}", direct);
+        let bare = std::process::Command::new("rc.exe").arg("/?").status();
+        eprintln!(
+            "DIAG: bare Command::new(\"rc.exe\").status() (PATH lookup) = {:?}",
+            bare
+        );
+    }
     tauri_build::build()
 }
