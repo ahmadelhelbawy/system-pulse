@@ -1,3 +1,11 @@
+# Not a real multi-package monorepo — this file exists only for the
+# allowBuilds setting below. `packages:` still has to be a non-empty list
+# or `pnpm install`/`pnpm store path` themselves fail with "packages field
+# missing or empty" (confirmed via real CI failures on this workflow, not
+# hypothetical) — "." is the one real package, this repo's root.
+packages:
+  - "."
+
 # pnpm 11 build-script approvals.
 allowBuilds:
   esbuild: true
