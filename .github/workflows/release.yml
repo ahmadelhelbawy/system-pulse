@@ -89,13 +89,21 @@ jobs:
       # your $PATH" (confirmed via a real failed run, 33377747679).
       - uses: ilammy/msvc-dev-cmd@v1
 
-      # Belt-and-suspenders: `ilammy/msvc-dev-cmd` reported finding Visual
-      # Studio and setting PATH to include the Windows Kits `bin\...\x64`
-      # directory, but tauri-winres still failed with "Are you sure you have
-      # RC.EXE in your $PATH ... or $RC is set?" (confirmed via a real failed
-      # run, 33385259179) — so rely on the `$RC` check it documents directly
-      # instead of trusting PATH propagation across steps.
-      - name: Locate RC.EXE and export it for tauri-winres
+      # Belt-and-suspenders, round 2: `ilammy/msvc-dev-cmd` reported finding
+      # Visual Studio and setting PATH to include the Windows Kits
+      # `bin\...\x64` directory, and explicitly setting `$RC` to a confirmed
+      # real rc.exe path (both verified present in the job's own env dump)
+      # *still* didn't stop tauri-winres failing with the same "RC.EXE in
+      # your $PATH ... or $RC is set?" panic (confirmed via two separate real
+      # failed runs, 33377747679 and 33385259179) — so this covers both
+      # remaining explanations at once: (a) `Out-File -Encoding utf8` on
+      # PowerShell 7 writes a UTF-8 BOM, which would silently corrupt the
+      # `RC` key's name in `$GITHUB_ENV`'s NAME=value parsing (fixed here via
+      # `utf8NoBOM`); (b) `embed-resource`'s own `$RC` handling has some
+      # other gap — covered by *also* adding rc.exe's directory to
+      # `$GITHUB_PATH`, the exact mechanism already proven reliable earlier
+      # in this same job for `dtolnay/rust-toolchain` and `pnpm`.
+      - name: Locate RC.EXE and put it on PATH + $RC for tauri-winres
         shell: pwsh
         run: |
           $rc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "rc.exe" -ErrorAction SilentlyContinue |
@@ -105,7 +113,8 @@ jobs:
             throw "rc.exe not found under Windows Kits 10 bin directory"
           }
           Write-Host "Found rc.exe at $rc"
-          echo "RC=$rc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "RC=$rc" -Encoding utf8NoBOM
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $rc -Parent) -Encoding utf8NoBOM
 
       # `tauri build` builds the frontend (beforeBuildCommand), compiles
       # the app in release mode with the `custom-protocol` feature so the
