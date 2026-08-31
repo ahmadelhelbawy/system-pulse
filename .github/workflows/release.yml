@@ -23,10 +23,17 @@ jobs:
         with:
           version: 9
 
+      # `cache: pnpm` is deliberately omitted: `actions/setup-node`'s cache
+      # priming runs `pnpm store path`, which fails with "packages field
+      # missing or empty" against this repo's `pnpm-workspace.yaml` (present
+      # only for its `allowBuilds` build-script-approval setting, with no
+      # `packages:` field — a single-package repo has no workspace members
+      # to list). Confirmed via a real failed run (33375083198) on this
+      # workflow, not a hypothetical. No caching here just costs a slightly
+      # slower install, never a correctness issue.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
