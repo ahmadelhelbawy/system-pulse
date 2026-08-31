@@ -1,6 +1,6 @@
 [package]
 name = "system-pulse-win"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 description = "Windows-specific telemetry collectors for System Pulse"
 license = "MIT"

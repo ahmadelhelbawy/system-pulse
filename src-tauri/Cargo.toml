@@ -1,6 +1,6 @@
 [package]
 name = "system-pulse"
-version = "0.1.0"
+version = "2.0.0"
 description = "System Pulse - a fast, native Windows system monitor"
 authors = ["System Pulse"]
 edition = "2021"
@@ -13,6 +13,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# `cargo tauri build`/`pnpm tauri build` passes `--features custom-protocol`
+# for a release build so the app loads the embedded `frontendDist` instead
+# of `devUrl` — this is the standard Tauri v2 scaffold feature and is
+# required for that to resolve; without it, a plain `cargo build` (no
+# feature) falls back to `devUrl`, which is exactly the "Backend
+# unreachable" / stuck-on-"acquiring telemetry" symptom fixed in the Phase 6
+# runtime-repair commit. DO NOT REMOVE.
+[features]
+custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

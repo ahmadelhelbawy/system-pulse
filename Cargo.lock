@@ -3577,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "system-pulse"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "log",
  "serde",
@@ -3596,7 +3596,7 @@ dependencies = [
 
 [[package]]
 name = "system-pulse-core"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "nvml-wrapper",
  "parking_lot",
@@ -3611,7 +3611,7 @@ dependencies = [
 
 [[package]]
 name = "system-pulse-win"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "parking_lot",
  "serde_json",
