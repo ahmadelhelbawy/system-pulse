@@ -215,6 +215,7 @@ mod raw {
     use super::map_provider_health;
     use std::sync::Mutex;
     use system_pulse_core::types::{FirewallProfileState, FirewallStatus, SecurityProviderStatus};
+    use windows::core::{HRESULT, PCSTR, PCWSTR};
     use windows::Win32::NetworkManagement::WindowsFirewall::{
         INetFwPolicy2, NetFwPolicy2, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE,
         NET_FW_PROFILE2_PUBLIC, NET_FW_PROFILE_TYPE2,
@@ -223,7 +224,6 @@ mod raw {
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
     };
-    use windows::core::{HRESULT, PCSTR, PCWSTR};
     use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::System::SecurityCenter::{
         WSC_SECURITY_PROVIDER_ANTIVIRUS, WSC_SECURITY_PROVIDER_AUTOUPDATE_SETTINGS,
@@ -255,7 +255,12 @@ mod raw {
             // SAFETY: `module` was just loaded successfully above; the name
             // is the documented exported symbol.
             #[allow(unsafe_code)]
-            unsafe { GetProcAddress(module, PCSTR(c"WscGetSecurityProviderHealth".as_ptr().cast())) }
+            unsafe {
+                GetProcAddress(
+                    module,
+                    PCSTR(c"WscGetSecurityProviderHealth".as_ptr().cast()),
+                )
+            }
         });
         // SAFETY: `raw`, when present, was returned by `GetProcAddress` for
         // exactly this symbol name and is reinterpreted as its documented
