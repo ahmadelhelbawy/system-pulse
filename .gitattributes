@@ -1,0 +1,7 @@
+# Force LF line endings on checkout regardless of the host platform's git
+# config. Without this, GitHub's windows-latest runners (core.autocrlf=true
+# by default) check text files out with CRLF, while every generated file in
+# this repo (contracts.ts, sanitized fixtures) is produced with LF — an
+# exact-string drift check then reports a false mismatch on line endings
+# alone. Confirmed via a real CI failure on this workflow, not speculative.
+* text=auto eol=lf
