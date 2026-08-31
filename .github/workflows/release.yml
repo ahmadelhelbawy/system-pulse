@@ -31,9 +31,14 @@ jobs:
       # to list). Confirmed via a real failed run (33375083198) on this
       # workflow, not a hypothetical. No caching here just costs a slightly
       # slower install, never a correctness issue.
+      # Node 20 fails "Frontend tests" on this runner: jsdom@30's bundled
+      # undici@8 calls `webidl.util.markAsUncloneable`, which Node 20 lacks
+      # (TypeError inside CacheStorage's constructor, crashing every vitest
+      # forked worker — confirmed via a real failed run, 33375916143). Node
+      # 22 is what's actually used locally (v22.23.1) and has the API.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
