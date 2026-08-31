@@ -49,10 +49,17 @@ mod tests {
 
     #[test]
     fn wait_until_returns_at_deadline_without_notify() {
+        // Deadline and floor are deliberately generous (not 30ms/25ms): a
+        // tight margin flaked on a real Windows CI runner under load
+        // (`start.elapsed() >= 25ms` measured short) — Windows' condvar
+        // timeout has ~15ms granularity, which a tight bound has no room to
+        // absorb. This still confirms the real invariant — `wait_until`
+        // doesn't return immediately when nothing calls `notify` — without
+        // being sensitive to a few milliseconds of scheduler jitter.
         let w = WakeSignal::new();
         let start = Instant::now();
-        w.wait_until(start + Duration::from_millis(30));
-        assert!(start.elapsed() >= Duration::from_millis(25));
+        w.wait_until(start + Duration::from_millis(200));
+        assert!(start.elapsed() >= Duration::from_millis(120));
     }
 
     #[test]
