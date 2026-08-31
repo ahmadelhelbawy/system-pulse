@@ -37,6 +37,10 @@ windows = { version = "0.62", features = [
     "Win32_System_Services",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_System_Registry",
+    # Dynamic-loads wscapi.dll at runtime (security_posture.rs) instead of
+    # statically linking it — that DLL is client-only Windows and genuinely
+    # absent on Server SKUs, including GitHub's windows-latest CI runner.
+    "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Wmi",
     "Win32_System_TaskScheduler",

@@ -223,12 +223,51 @@ mod raw {
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_MULTITHREADED,
     };
+    use windows::core::{HRESULT, PCSTR, PCWSTR};
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::System::SecurityCenter::{
-        WscGetSecurityProviderHealth, WSC_SECURITY_PROVIDER_ANTIVIRUS,
-        WSC_SECURITY_PROVIDER_AUTOUPDATE_SETTINGS, WSC_SECURITY_PROVIDER_HEALTH,
+        WSC_SECURITY_PROVIDER_ANTIVIRUS, WSC_SECURITY_PROVIDER_AUTOUPDATE_SETTINGS,
+        WSC_SECURITY_PROVIDER_HEALTH,
     };
 
+    type WscGetSecurityProviderHealthFn =
+        unsafe extern "system" fn(u32, *mut WSC_SECURITY_PROVIDER_HEALTH) -> HRESULT;
+
+    /// `wscapi.dll` (Windows Security Center) ships only on client Windows —
+    /// it's documented as unsupported on Server SKUs, and genuinely absent
+    /// there (confirmed by a real CI failure: linking this symbol statically
+    /// made the *entire test binary* fail to load with
+    /// `STATUS_DLL_NOT_FOUND` on GitHub's `windows-latest` runner, before any
+    /// test even ran). Resolved dynamically instead, same reasoning as the
+    /// NVML adapter (`gpu/nvidia.rs`) not requiring `nvml.dll` to exist at
+    /// load time — its absence must degrade to "no data", never crash the
+    /// process.
+    fn wsc_get_security_provider_health() -> Option<WscGetSecurityProviderHealthFn> {
+        use std::sync::OnceLock;
+        static RAW: OnceLock<Option<unsafe extern "system" fn() -> isize>> = OnceLock::new();
+        let raw = *RAW.get_or_init(|| {
+            let wide: Vec<u16> = "wscapi.dll\0".encode_utf16().collect();
+            // SAFETY: `wide` is a valid null-terminated UTF-16 string naming
+            // a well-known system DLL; failure (the DLL isn't present on
+            // this host) is handled via `.ok()?`, not assumed away.
+            #[allow(unsafe_code)]
+            let module = unsafe { LoadLibraryW(PCWSTR(wide.as_ptr())) }.ok()?;
+            // SAFETY: `module` was just loaded successfully above; the name
+            // is the documented exported symbol.
+            #[allow(unsafe_code)]
+            unsafe { GetProcAddress(module, PCSTR(c"WscGetSecurityProviderHealth".as_ptr().cast())) }
+        });
+        // SAFETY: `raw`, when present, was returned by `GetProcAddress` for
+        // exactly this symbol name and is reinterpreted as its documented
+        // C signature.
+        #[allow(unsafe_code)]
+        raw.map(|f| unsafe { std::mem::transmute::<_, WscGetSecurityProviderHealthFn>(f) })
+    }
+
     pub fn read_wsc() -> Vec<SecurityProviderStatus> {
+        let Some(func) = wsc_get_security_provider_health() else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for (provider, kind) in [
             (WSC_SECURITY_PROVIDER_ANTIVIRUS, "antivirus"),
@@ -236,9 +275,10 @@ mod raw {
         ] {
             let mut health = WSC_SECURITY_PROVIDER_HEALTH(0);
             // SAFETY: `health` is a correctly-typed out-parameter for this
-            // flat, no-allocation API call.
+            // flat, no-allocation API call; `func` was resolved above via
+            // `GetProcAddress` for this exact symbol and signature.
             #[allow(unsafe_code)]
-            let ok = unsafe { WscGetSecurityProviderHealth(provider.0 as u32, &mut health) };
+            let ok = unsafe { func(provider.0 as u32, &mut health) };
             if ok.is_ok() {
                 out.push(SecurityProviderStatus {
                     kind: kind.to_string(),
