@@ -80,6 +80,15 @@ jobs:
       - name: Windows-target check — system-pulse-win
         run: cargo check -p system-pulse-win --target x86_64-pc-windows-msvc
 
+      # `tauri-winres` (pulled in by `tauri-build`) shells out to `rc.exe` to
+      # embed the icon/version resource into the .exe. It isn't on PATH in
+      # GitHub's default PowerShell job environment — only an activated MSVC
+      # developer environment puts it there — so the earlier Rust
+      # test/clippy steps succeeded (rustc locates cl.exe/link.exe itself)
+      # while the release build failed with "Are you sure you have RC.EXE in
+      # your $PATH" (confirmed via a real failed run, 33377747679).
+      - uses: ilammy/msvc-dev-cmd@v1
+
       # `tauri build` builds the frontend (beforeBuildCommand), compiles
       # the app in release mode with the `custom-protocol` feature so the
       # embedded dist/ is used instead of a dev server, and produces the
